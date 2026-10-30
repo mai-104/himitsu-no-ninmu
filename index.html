@@ -214,7 +214,89 @@ const ASSETS = {
   floor:      null,        // TODO: 床
   puzzle:     null,        // TODO: はめて！ パズルの絵（※形に合わせたUV調整が別途必要）
   ground:     null,        // TODO: 叩いて！ 地面
+  // ↓ 追加の差し替え場所（画像を書くと、その面に貼られます）
+  titleLogo:  null,        // タイトルの文字を画像にする（例 "images/title_logo.png"）
+  titleDeco:  null,        // タイトル画面で回っている飾り
+  bombBox:    null,        // 切って！ 時限装置の本体
+  bombBase:   null,        // 切って！ 手元の装置
+  rouletteWheel: null,     // とめて！ ルーレット盤（※ROULETTE の並び順と同じ絵にする）
+  lockBody:   null,        // あけて！ 南京錠の本体
+  shackle:    null,        // あけて！ 南京錠のつる
+  katanukiPlate: null,     // かたぬき！ お菓子の板
+  balloon:    null,        // いれて！ 風船
+  pump:       null,        // いれて！ 空気入れ
+  jar:        null,        // まぜて！ 瓶
 };
+
+/* ===== 3Dの物の差し替え（Models の中の物） =====
+   ここに書くと、Models の形の代わりに 3Dモデル(glb) か 画像(png) を表示します。
+   大きさは元の形に自動で合わせます（size: で高さを指定することもできます）。
+   画像の時は、板に貼って正面を向けて置きます。
+   名前の一覧：ball kettle watermelon plant mole chick bomb parfaitGlass puddingPlate softCream strawberry
+               wafer cherry whip mikan sodaBottle suika suikaHalf blindfoldPerson
+   例： mole: { png: "images/mole.png" },   ball: { glb: "models/ball.glb" }, */
+const MODEL_FILES = {
+};
+
+/* ===== BGM・効果音のファイル =====
+   bgm.title … タイトル画面　bgm.play … プレイ中
+   se.start … スタート　se.instruction … 指令が出た時　se.tap … プレイ中にタップ
+   se.clear … クリア　se.fail … 失敗　se.gameover … ゲームオーバー
+   例： title: "sounds/bgm_title.mp3", */
+const SOUNDS = {
+  bgm: { title: null, play: null },
+  se:  { start: null, instruction: null, tap: null, clear: null, fail: null, gameover: null },
+  volume: { bgm: 0.5, se: 0.8 },
+};
+/* ===== BGM・効果音 =====
+   SOUNDS にファイル名を書くと鳴ります（null のままなら鳴りません）。
+   音は同じリポジトリの sounds フォルダに入れて "sounds/ファイル名.mp3" のように書きます（mp3 がおすすめ）。
+   どの名前でいつ鳴るかは README.md にあります。
+   ・BGMは、画面を最初にタップした時から流れます（スマホのきまりで、タップ前は鳴らせないため）
+   ・音のON/OFFボタンは、音を1つでも入れると表示されます */
+const Sound = {
+  key: "ninmu-sound",
+  on: true, cache: {}, cur: null, curName: null, want: null, unlocked: false,
+  init() {
+    try { this.on = localStorage.getItem(this.key) !== "off"; } catch (_) {}
+    const unlock = () => { this.unlocked = true; if (this.want) this.bgm(this.want, true); };
+    addEventListener("pointerdown", unlock, { capture: true });
+    document.addEventListener("visibilitychange", () => {
+      if (!this.cur) return;
+      if (document.visibilityState === "hidden") this.cur.pause(); else if (this.on) this.cur.play().catch(() => {});
+    });
+  },
+  any() { return Object.values(SOUNDS.bgm).some(Boolean) || Object.values(SOUNDS.se).some(Boolean); },
+  se(name) {
+    const src = SOUNDS.se[name];
+    if (!src || !this.on) return;
+    try {
+      if (!this.cache[src]) { this.cache[src] = new Audio(src); this.cache[src].preload = "auto"; }
+      const a = this.cache[src].cloneNode();
+      a.volume = SOUNDS.volume.se; a.play().catch(() => {});
+    } catch (_) {}
+  },
+  /** BGMを切り替える（同じ曲なら何もしない）。null で止める */
+  bgm(name, force) {
+    this.want = name;
+    const src = name ? SOUNDS.bgm[name] : null;
+    if (!force && this.curName === name && this.cur && !this.cur.paused) return;
+    if (this.cur) { this.cur.pause(); this.cur = null; this.curName = null; }
+    if (!src || !this.on || !this.unlocked) return;
+    try {
+      const a = new Audio(src); a.loop = true; a.volume = SOUNDS.volume.bgm;
+      a.play().catch(() => {});
+      this.cur = a; this.curName = name;
+    } catch (_) {}
+  },
+  toggle() {
+    this.on = !this.on;
+    try { localStorage.setItem(this.key, this.on ? "on" : "off"); } catch (_) {}
+    if (this.on) this.bgm(this.want, true); else if (this.cur) { this.cur.pause(); this.cur = null; this.curName = null; }
+    return this.on;
+  },
+};
+
 
 const Assets = {
   _loader: new THREE.TextureLoader(),
@@ -873,12 +955,12 @@ class CutWireGame extends MiniGame {
     const slot = (i) => -W + (2 * W) * i / 4;
 
     // タイマー本体  TODO: 時限装置の画像/モデルに差し替え
-    this.add(mesh(new THREE.BoxGeometry(2.8, 1.3, .5), mat(0x2b2b33), 0, topY, -.3));
+    this.add(mesh(new THREE.BoxGeometry(2.8, 1.3, .5), Assets.material("bombBox", 0x2b2b33), 0, topY, -.3));
     this.panel = makeCanvasPanel(2.4, 1.0);
     this.panel.plane.position.set(0, topY, 0);
     this.add(this.panel.plane); this.track(this.panel.tex);
     // 手元の装置  TODO: 画像/モデルに差し替え
-    this.add(mesh(new THREE.BoxGeometry(2 * W + .8, .6, .5), mat(0x55506e), 0, botY - .2, -.3));
+    this.add(mesh(new THREE.BoxGeometry(2 * W + .8, .6, .5), Assets.material("bombBase", 0x55506e), 0, botY - .2, -.3));
 
     // 線の道すじ：段ごとに並び順をシャッフルして、線どうしを交差させる
     const levels = 5;
@@ -1494,6 +1576,7 @@ class RouletteGame extends MiniGame {
       c.fillText(s.label, cx + Math.cos(m) * r * .66, cx - Math.sin(m) * r * .66);
     });
     p.tex.needsUpdate = true;
+    if (Assets.texture("rouletteWheel")) p.plane.material.map = Assets.texture("rouletteWheel");
     p.plane.material.transparent = true;
     this.wheel = this.add(p.plane); this.track(p.tex);
     this.wheel.position.y = wheelY;
@@ -1551,8 +1634,8 @@ class DialLockGame extends MiniGame {
     const reelW = Math.min(.95, (w - 1.0) / 4.4), gap = reelW * 1.12;
     this.lockY = -1.4;
     // 南京錠  TODO: 画像/モデルに差し替え
-    this.add(mesh(new THREE.BoxGeometry(gap * 4 + .6, 2.6, .6), mat(0xd9a640, { metalness: .5, roughness: .35 }), 0, this.lockY, 0));
-    this.shackle = this.add(mesh(new THREE.TorusGeometry(gap * 1.4, .2, 12, 32, Math.PI), mat(0xc8ccd4, { metalness: .7, roughness: .25 }), 0, this.lockY + 1.1, -.1));
+    this.add(mesh(new THREE.BoxGeometry(gap * 4 + .6, 2.6, .6), Assets.material("lockBody", 0xd9a640, { metalness: .5, roughness: .35 }), 0, this.lockY, 0));
+    this.shackle = this.add(mesh(new THREE.TorusGeometry(gap * 1.4, .2, 12, 32, Math.PI), Assets.material("shackle", 0xc8ccd4, { metalness: .7, roughness: .25 }), 0, this.lockY + 1.1, -.1));
     this.reels = this.code.map((digit, i) => {
       const p = makeCanvasPanel(reelW, reelW * 2, 128, 256);
       p.plane.position.set((i - 1.5) * gap, this.lockY - .1, .32);
@@ -1651,7 +1734,7 @@ class KatanukiGame extends MiniGame {
     const N = 48, curve = new THREE.CatmullRomCurve3(fine, true);
     this.points = curve.getSpacedPoints(N).slice(0, N);
     // お菓子の板  TODO: 型抜き菓子の画像に差し替え
-    this.add(mesh(new THREE.BoxGeometry(S * 2.5, S * 2.5, .15), mat(0xf3d9a4), 0, cy, -.1));
+    this.add(mesh(new THREE.BoxGeometry(S * 2.5, S * 2.5, .15), Assets.material("katanukiPlate", 0xf3d9a4), 0, cy, -.1));
     this.dotMat = mat(0x8a5a2b);
     this.doneMat = mat(0xffcf3f, { emissive: 0xffaa00, emissiveIntensity: .4 });
     const dotGeo = this.track(new THREE.CircleGeometry(.07, 12));
@@ -1710,11 +1793,11 @@ class PumpGame extends MiniGame {
       d.renderOrder = 10;
     }
     // 風船  TODO: 画像/モデルに差し替え
-    this.balloon = this.add(mesh(new THREE.SphereGeometry(1, 32, 20), mat(0xff6fa0, { roughness: .25 })));
+    this.balloon = this.add(mesh(new THREE.SphereGeometry(1, 32, 20), Assets.material("balloon", 0xff6fa0, { roughness: .25 })));
     this.knot = this.add(mesh(new THREE.ConeGeometry(.1, .18, 10), mat(0xff6fa0)));
     // 空気入れ  TODO: 画像/モデルに差し替え
     this.pumpY = -h / 2 + 1.9;
-    this.add(mesh(new THREE.CylinderGeometry(.28, .28, 1.4, 16), mat(0x3f8cff), 0, this.pumpY, 0));
+    this.add(mesh(new THREE.CylinderGeometry(.28, .28, 1.4, 16), Assets.material("pump", 0x3f8cff), 0, this.pumpY, 0));
     this.handle = this.add(group(
       mesh(new THREE.CylinderGeometry(.05, .05, .9, 8), mat(0xc8ccd4), 0, .45, 0),
       mesh(new THREE.BoxGeometry(1.0, .14, .14), mat(0x262633), 0, .9, 0),
@@ -1761,7 +1844,7 @@ class MixGame extends MiniGame {
     // 瓶  TODO: 画像/モデルに差し替え
     this.jar = this.add(new THREE.Group());
     this.jar.position.y = -.8;
-    this.jar.add(mesh(new THREE.CylinderGeometry(.95, .95, 2.6, 28), mat(0xdff3ff, { transparent: true, opacity: .3, roughness: .1 })));
+    this.jar.add(mesh(new THREE.CylinderGeometry(.95, .95, 2.6, 28), Assets.material("jar", 0xdff3ff, { transparent: true, opacity: .3, roughness: .1 })));
     this.jar.add(mesh(new THREE.CylinderGeometry(.75, .75, .35, 24), mat(0x55506e), 0, 1.45, 0));
     this.top = mesh(new THREE.CylinderGeometry(.86, .86, 1.0, 28), mat(rc.a), 0, .3, 0);
     this.bottom = mesh(new THREE.CylinderGeometry(.86, .86, 1.0, 28), mat(rc.b), 0, -.7, 0);
@@ -1959,6 +2042,7 @@ const GameManager = {
   },
 
   startRun() {
+    Sound.se("start"); Sound.bgm("play");
     this.mode = "normal";
     this.score = 0;
     UI.setScore(0);
@@ -1969,6 +2053,7 @@ const GameManager = {
   },
 
   nextGame() {
+    Sound.se("instruction");
     if (this.current) this.current.dispose();
     UI.setHint("");
     const test = this.mode === "test";
@@ -1985,7 +2070,7 @@ const GameManager = {
   enter(state) { this.state = state; this.timer = 0; },
 
   // --- Input からの通知（プレイ中だけゲームに渡す） ---
-  tap(info)        { if (this.state === "playing") this.current.onTap(info); },
+  tap(info)        { if (this.state === "playing") { Sound.se("tap"); this.current.onTap(info); } },
   drag(info)       { if (this.state === "playing") this.current.onDrag(info); },
   release(info)    { if (this.state === "playing" || this.state === "result") this.current.onRelease(info); },
   swipe(dir, info) { if (this.state === "playing") this.current.onSwipe(dir, info); },
@@ -2022,6 +2107,7 @@ const GameManager = {
   },
 
   finish(result) {
+    Sound.se(result === "win" ? "clear" : "fail");
     this.lastResult = result;
     if (result === "win") {
       if (this.mode !== "test") { this.score++; UI.setScore(this.score); }
@@ -2033,6 +2119,7 @@ const GameManager = {
   },
 
   gameOver() {
+    Sound.se("gameover"); Sound.bgm("title");
     UI.hideBanner();
     UI.show(UI.hud, false);
     UI.finalScore.textContent = this.score;
@@ -2041,14 +2128,69 @@ const GameManager = {
   },
 };
 
+/* ---------- 3Dの物の差し替え（MODEL_FILES） ----------
+   起動時に読み込んでおき、ゲームの中で Models.〇〇() が呼ばれた時に差し替える。
+   元の形は「見えないまま」残すので、ゲームの中の動き（ふたが飛ぶ等）はそのまま動きます */
+const ModelSwap = {
+  tpl: {},
+  preload() {
+    const keys = Object.keys(MODEL_FILES).filter((k) => Models[k] && (MODEL_FILES[k].glb || MODEL_FILES[k].png));
+    if (!keys.length) return;
+    const needGlb = keys.some((k) => MODEL_FILES[k].glb);
+    const loader = needGlb ? new Promise((res, rej) => { const s = document.createElement("script"); s.src = "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"; s.onload = () => res(new THREE.GLTFLoader()); s.onerror = rej; document.head.appendChild(s); }) : null;
+    for (const k of keys) {
+      const f = MODEL_FILES[k];
+      if (f.glb) loader.then((l) => l.load(f.glb, (g) => (this.tpl[k] = { obj: g.scene }))).catch(() => {});
+      else Assets._loader.load(f.png, (tex) => (this.tpl[k] = { tex }));
+    }
+    for (const k of keys) {
+      const orig = Models[k];
+      Models[k] = function (...args) {
+        const base = orig.apply(this, args), t = ModelSwap.tpl[k];
+        if (!t) return base;
+        // 元の形の大きさ・位置に合わせる
+        const box = new THREE.Box3().setFromObject(base), size = new THREE.Vector3(), c = new THREE.Vector3();
+        box.getSize(size); box.getCenter(c);
+        const h = MODEL_FILES[k].size || size.y || 1;
+        let vis;
+        if (t.obj) {
+          vis = t.obj.clone(true);
+          const b2 = new THREE.Box3().setFromObject(vis), s2 = new THREE.Vector3(), c2 = new THREE.Vector3();
+          b2.getSize(s2); b2.getCenter(c2);
+          const sc = h / Math.max(s2.y, .001);
+          vis.scale.setScalar(sc); vis.position.set(c.x - c2.x * sc, c.y - c2.y * sc, c.z - c2.z * sc);
+        } else {
+          const ar = t.tex.image.width / t.tex.image.height;
+          vis = new THREE.Mesh(new THREE.PlaneGeometry(h * ar, h), new THREE.MeshBasicMaterial({ map: t.tex, transparent: true, alphaTest: .05, side: THREE.DoubleSide }));
+          vis.position.copy(c);
+        }
+        base.traverse((o) => { if (o.isMesh) o.visible = false; });
+        base.add(vis);
+        return base;
+      };
+    }
+  },
+};
+
 /* ---------- 起動 ---------- */
+ModelSwap.preload();
+Sound.init();
+Sound.bgm("title");
+if (ASSETS.titleLogo) { const h1 = document.querySelector("#startScreen h1"); h1.innerHTML = `<img src="${ASSETS.titleLogo}" alt="秘密の任務オールクリア" style="max-width:min(90vw,520px);max-height:30vh;display:block;margin:0 auto">`; }
+if (Sound.any()) {
+  const b = document.createElement("button"); b.type = "button"; b.className = "toggle sub"; b.id = "soundToggle";
+  const label = () => (b.textContent = `音：${Sound.on ? "ON" : "OFF"}`); label();
+  b.addEventListener("pointerdown", (e) => e.stopPropagation());
+  b.addEventListener("click", (e) => { e.stopPropagation(); Sound.toggle(); label(); });
+  document.getElementById("testOpen").before(b);
+}
 UI.init();
 Engine.init(document.getElementById("stage"));
 Input.init(document.getElementById("stage"));
 GameManager.init();
 
 // タイトル画面の飾り（TODO: タイトル用モデルに差し替え可）
-const titleDeco = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 0), new THREE.MeshStandardMaterial({ color: 0xffcf3f, flatShading: true }));
+const titleDeco = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 0), Assets.material("titleDeco", 0xffcf3f, { flatShading: true }));
 Engine.scene.add(titleDeco);
 
 let last = performance.now();
