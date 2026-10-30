@@ -39,6 +39,17 @@
 | `balloon` / `pump` | いれて！ の風船・空気入れ |
 | `jar` | まぜて！ の瓶 |
 
+| `timingZone` | ここで押せ！ の緑のエリア |
+| `wire` | 切って！ の線の模様（色は線ごとに重ねて付きます） |
+| `timerPanel` | 切って！ のタイマー表示の背景（数字はゲームが上に描く） |
+| `rouletteCard` | とめて！ のお題の札の背景（「お題」と色・文字はゲームが上に描く） |
+| `codePanel` | あけて！ の暗証番号の札の背景（数字はゲームが上に描く） |
+| `dialReel` | あけて！ のダイヤルの背景 |
+| `dialDigits` | あけて！ のダイヤルの数字（0〜9を上から順に、縦1列に同じ間隔で並べた1枚の画像） |
+| `strokeLine` / `strokeDot` | ひとふで！ の線と点（なぞった所は黄色が重なります） |
+| `katanukiDot` / `katanukiDone` / `katanukiPiece` | かたぬき！ の点線の点・なぞった点・抜けたお菓子 |
+| `pumpGuide` | いれて！ の目安の枠（点線） |
+
 書きかた：`tapCube: "images/tap_cube.png",`
 
 ### ② 3Dの物 … `const MODEL_FILES = {` の中
