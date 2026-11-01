@@ -1,0 +1,2416 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>html{color-scheme:dark}body{margin:0;font-size:14px}[hidden]{display:none!important}</style>
+<title>秘密の任務オールクリア</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Dela+Gothic+One&family=Zen+Kaku+Gothic+New:wght@500;700&display=swap">
+<style>
+/* レイアウト：画面全体が3Dキャンバス。UIはその上に重ねる（ゲーム機の画面のような一枚もの）
+   見た目はわざと「暗いアーケード画面」1種類に固定しています（ライト/ダーク切替なし） */
+:root {
+  /* TODO: 色を変えたい時はここだけ書き換えればUI全体に反映されます */
+  --bg: #1b1730;        /* 背景（3D背景色と合わせる） */
+  --ink: #fff8ec;       /* 文字 */
+  --pop: #ffcf3f;       /* 指示・スコアの強調色 */
+  --good: #5be3a1;      /* CLEAR */
+  --bad: #ff5a6e;       /* GAME OVER */
+  --shade: rgba(16,12,32,.72);
+  --font-display: "Dela Gothic One", "Hiragino Sans", "Yu Gothic", sans-serif;
+  --font-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--font-body);
+  overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; }
+
+/* ---- 上部HUD（スコアとタイマー） ---- */
+#hud {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 5; pointer-events: none;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 12px);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 8px;
+}
+.hud-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.score { font-family: var(--font-display); font-size: 1.6rem; color: var(--pop); font-variant-numeric: tabular-nums; }
+.score small { font-family: var(--font-body); font-size: .75rem; letter-spacing: .12em; color: var(--ink); opacity: .7; margin-right: 6px; }
+.count { font-family: var(--font-display); font-size: 1.6rem; font-variant-numeric: tabular-nums; }
+.bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,.14); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 100%; background: var(--pop); transform-origin: left; }
+.hint { text-align: center; font-family: var(--font-display); font-size: 1.15rem; min-height: 1.4em; font-variant-numeric: tabular-nums; }
+
+/* ---- 中央の大きな文字（指示 / CLEAR / GAME OVER） ---- */
+#banner {
+  position: fixed; inset: 0; z-index: 6; pointer-events: none;
+  display: grid; place-items: center; text-align: center;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+#banner span {
+  font-family: var(--font-display); font-size: clamp(2.6rem, 14vw, 6.5rem); line-height: 1.1;
+  color: var(--pop); -webkit-text-stroke: 3px var(--bg); paint-order: stroke fill;
+  text-shadow: 0 6px 0 rgba(0,0,0,.35); text-wrap: balance;
+}
+#banner.clear span { color: var(--good); }
+#banner.fail span { color: var(--bad); }
+#banner.pop span { animation: pop .35s cubic-bezier(.2,1.6,.4,1) both; }
+@keyframes pop { from { transform: scale(.3) rotate(-8deg); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* ---- スタート / ゲームオーバー画面 ---- */
+.screen {
+  position: fixed; inset: 0; z-index: 10; background: var(--shade);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+  text-align: center; cursor: pointer;
+  padding-block: 24px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.screen h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(2.2rem, 11vw, 4rem); line-height: 1.15; text-wrap: balance; margin: 0; }
+.screen h1 em { font-style: normal; color: var(--pop); }
+.screen p { margin: 0; font-size: .95rem; opacity: .8; line-height: 1.7; }
+.tap { font-family: var(--font-display); font-size: 1.4rem; letter-spacing: .1em; color: var(--pop); animation: blink 1.1s steps(2) infinite; }
+.final { font-family: var(--font-display); font-size: 4rem; color: var(--pop); font-variant-numeric: tabular-nums; line-height: 1; }
+.label { font-size: .75rem; letter-spacing: .2em; opacity: .7; }
+.option { display: grid; gap: 6px; justify-items: center; }
+.toggle {
+  font: inherit; font-weight: 700; font-size: 1rem; color: var(--pop); background: transparent;
+  border: 2px solid var(--pop); border-radius: 999px; padding: 10px 22px; cursor: pointer;
+}
+.toggle[aria-pressed="true"] { background: var(--pop); color: var(--bg); }
+.toggle:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+.toggle:disabled { opacity: .6; }
+.option small { font-size: .8rem; opacity: .75; min-height: 1.3em; }
+.sensor-box { display: grid; gap: 6px; justify-items: center; }
+.sensor { font-family: var(--font-display); font-size: .95rem; font-variant-numeric: tabular-nums; min-height: 1.4em; }
+.sensor-box small { font-size: .72rem; opacity: .7; line-height: 1.5; }
+.build { font-size: .7rem; letter-spacing: .08em; opacity: .5; font-variant-numeric: tabular-nums; }
+.toggle.sub { font-size: .85rem; padding: 7px 18px; border-width: 1px; color: var(--ink); border-color: rgba(255,248,236,.45); }
+
+/* ---- テストモード（全ゲーム一覧） ---- */
+#testScreen { justify-content: flex-start; overflow-y: auto; touch-action: pan-y; cursor: default; }
+.test-wrap { margin-block: auto; width: min(100%, 440px); display: grid; gap: 16px; }
+.test-wrap h2 { font-family: var(--font-display); font-weight: 400; font-size: 1.6rem; margin: 0; }
+.test-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; }
+.level { font-family: var(--font-display); font-size: 1.3rem; min-width: 3.5em; font-variant-numeric: tabular-nums; }
+.game-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.game-btn {
+  font: inherit; color: var(--ink); text-align: left; cursor: pointer;
+  background: rgba(255,248,236,.06); border: 1px solid rgba(255,248,236,.18); border-radius: 12px;
+  padding: 12px; display: grid; gap: 4px; min-width: 0;
+}
+.game-btn b { font-family: var(--font-display); font-weight: 400; font-size: 1.05rem; color: var(--pop); }
+.game-btn small { font-size: .72rem; opacity: .7; overflow-wrap: anywhere; }
+.game-btn:disabled { opacity: .4; cursor: default; }
+.game-btn:focus-visible { outline: 3px solid var(--pop); outline-offset: 2px; }
+@keyframes blink { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .tap, #banner.pop span { animation: none; } }
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+
+<div id="hud" hidden>
+  <div class="hud-row">
+    <div class="score"><small>SCORE</small><span id="score">0</span></div>
+    <div class="count" id="count">5.0</div>
+  </div>
+  <div class="bar"><i id="timebar"></i></div>
+  <div class="hint" id="hint"></div>
+</div>
+
+<div id="banner"><span id="bannerText"></span></div>
+
+<!-- TODO: タイトルロゴ画像に差し替える場合は <h1> の中を <img src="..."> にする -->
+<div class="screen" id="startScreen">
+  <h1>秘密の任務<br><em>オールクリア</em></h1>
+  <p>次々に届く指令を、5秒以内にこなせ！<br>タップ・スワイプ・ドラッグで遊べます</p>
+  <!-- 振る・傾ける操作の切り替え。ONの時だけ、振る／傾けるゲームが抽選に入る -->
+  <div class="option">
+    <button class="toggle" id="motionToggle" type="button" aria-pressed="false">振る・傾ける操作：OFF</button>
+    <small id="motionStatus">ONにすると、スマホを振る・傾けるゲームも出てきます</small>
+  </div>
+  <div class="tap">TAP TO START</div>
+  <button class="toggle sub" id="testOpen" type="button">テストモード</button>
+  <div class="build" id="buildInfo"></div>
+</div>
+
+<!-- テストモード：登録したゲームを選んで1つずつ遊べる（スコアには数えない） -->
+<div class="screen" id="testScreen" hidden>
+  <div class="test-wrap">
+    <h2>テストモード</h2>
+    <div class="test-row">
+      <span class="label">難しさレベル</span>
+      <button class="toggle sub" id="lvDown" type="button" aria-label="レベルを下げる">－</button>
+      <span class="level" id="lvValue">0</span>
+      <button class="toggle sub" id="lvUp" type="button" aria-label="レベルを上げる">＋</button>
+    </div>
+    <div class="sensor-box">
+      <div class="sensor" id="sensorInfo"></div>
+      <small>右に傾けると x がプラス、画面の上側を下げると y がプラスになれば正常です</small>
+      <button class="toggle sub" id="testCalib" type="button">いまの持ち方を基準にする</button>
+    </div>
+    <div class="game-list" id="testList"></div>
+    <div class="test-row">
+      <button class="toggle" id="testAll" type="button">順番に全部</button>
+      <button class="toggle sub" id="testBack" type="button">タイトルに戻る</button>
+    </div>
+  </div>
+</div>
+
+<div class="screen" id="overScreen" hidden>
+  <div class="label">MISSION FAILED</div>
+  <div class="final" id="finalScore">0</div>
+  <div class="label">クリアした任務の数</div>
+  <div class="tap">TAP TO RETRY</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+"use strict";
+/* =====================================================================
+   秘密の任務オールクリア  ― 土台（フレームワーク）
+   ---------------------------------------------------------------------
+   【構成】
+     1. CONFIG        … 時間や色などの設定値
+     2. ASSETS        … 素材パス（後で画像に差し替える場所）
+     3. Models        … 3Dの見た目（仮の図形）。モデル差し替えはここだけ触ればOK
+     4. Engine        … Three.js の画面・カメラ・ライト
+     5. Input         … タップ／スワイプ／ドラッグ判定（複数の指にも対応）
+        Motion        … スマホを振る操作（スタート画面でONにした時だけ使う）
+     6. UI            … HUD・中央の文字・画面切替
+     7. MiniGame      … すべてのミニゲームの親クラス（ドラッグ＆ドロップ機能つき）
+     8. GameRegistry  … ミニゲームの登録簿
+     9. ミニゲーム本体  ← ここを増やしていく
+    10. GameManager   … 全体の流れ（指示→プレイ→結果→次へ）
+
+   【新しいミニゲームの足し方】（3ステップ）
+     ① MiniGame を継承したクラスを作る（9章の末尾のテンプレート参照）
+     ② static meta に id / 指示文 を書く
+     ③ GameRegistry.register(クラス名) を1行足す
+   ===================================================================== */
+
+/* ---------- 0. BUILD（公開した版の目印。スタート画面の下に出る。更新したら書き換える） ---------- */
+const BUILD = "2026-11-02";
+
+/* ---------- 1. CONFIG ---------- */
+const CONFIG = {
+  instructionTime: 1.0,   // 指示表示の秒数
+  gameTime: 5.0,          // 1ゲームの制限時間
+  resultTime: 1.0,        // CLEAR! 表示から次へ進むまでの秒数
+  bgColor: 0x1b1730,      // TODO: 3D背景色（背景画像にする場合は ASSETS.background を使う）
+  avoidRepeat: true,      // 同じゲームが連続しないようにする
+};
+
+/* ---------- 2. ASSETS（差し替え用の素材パス） ----------
+   null のままなら仮の色で表示されます。画像パスを入れると Assets.material() 経由で使われます。
+   ※Artifactsでは外部画像URLは読めないため、data:URI（Base64）で埋め込むか、
+     GitHub Pages などに置く場合はそのパスを指定してください。 */
+const ASSETS = {
+  background: null,        // TODO: ここを後で背景画像に差し替え（例: "img/bg.png"）
+  tapCube:    null,        // TODO: 連打ブロックのテクスチャ
+  player:     null,        // TODO: よけろ！ 自機
+  enemy:      null,        // TODO: よけろ！ 敵の球
+  timingBar:  null,        // TODO: ここで押せ！ バー
+  floor:      null,        // TODO: 床
+  puzzle:     null,        // TODO: はめて！ パズルの絵（※形に合わせたUV調整が別途必要）
+  ground:     null,        // TODO: 叩いて！ 地面
+};
+
+const Assets = {
+  _loader: new THREE.TextureLoader(),
+  _cache: {},
+  texture(key) {
+    const url = ASSETS[key];
+    if (!url) return null;
+    if (!this._cache[url]) this._cache[url] = this._loader.load(url);
+    return this._cache[url];
+  },
+  /** 素材があればテクスチャ付き、なければ仮色のマテリアル */
+  material(key, fallbackColor, extra = {}) {
+    const map = key ? this.texture(key) : null;
+    return new THREE.MeshStandardMaterial(
+      Object.assign(map ? { map } : { color: fallbackColor }, { roughness: .55 }, extra)
+    );
+  },
+};
+
+/* ---------- 3. Models（仮の3Dモデル置き場） ----------
+   どれも THREE.Group を返します。原点＝置いたときの「底」または「中心」。
+   TODO: ここの中身を、画像を貼った板（Sprite）や GLTF モデルの読み込みに差し替えれば
+         ゲーム側のコードは触らずに見た目だけ変わります。 */
+const mat = (color, extra = {}) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: .6 }, extra));
+const mesh = (geo, m, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(geo, m); o.position.set(x, y, z); return o; };
+const group = (...children) => { const g = new THREE.Group(); children.forEach((c) => g.add(c)); return g; };
+
+const Models = {
+  // ---- 打ち返して！ ----
+  ball() { // TODO: 野球ボール（画像やモデルに差し替え可）
+    const r = .38;
+    const g = group(mesh(new THREE.SphereGeometry(r, 32, 20), mat(0xfbf7ee, { roughness: .8 })));
+    // 野球ボールの縫い目（テニスボール型の曲線）
+    const pts = [];
+    for (let i = 0; i <= 120; i++) {
+      const t = i / 120 * Math.PI * 2, a = .75, b = .25;
+      const v = new THREE.Vector3(a * Math.cos(t) + b * Math.cos(3 * t), a * Math.sin(t) - b * Math.sin(3 * t), 2 * Math.sqrt(a * b) * Math.sin(2 * t));
+      pts.push(v.normalize().multiplyScalar(r * 1.01));
+    }
+    const seam = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 120, .022, 6, true), mat(0xd8202a));
+    g.add(seam);
+    return g;
+  },
+  kettle() { // TODO: ヤカン
+    const m = mat(0xb9c0c8, { metalness: .6, roughness: .3 });
+    const g = group(
+      mesh(new THREE.CylinderGeometry(.34, .44, .5, 20), m),
+      mesh(new THREE.CylinderGeometry(.12, .2, .1, 16), m, 0, .3, 0),
+    );
+    const spout = mesh(new THREE.ConeGeometry(.08, .45, 10), m, .42, .12, 0);
+    spout.rotation.z = -1.0; g.add(spout);
+    const handle = mesh(new THREE.TorusGeometry(.25, .035, 6, 16, Math.PI), mat(0x333333), 0, .3, 0);
+    g.add(handle);
+    return g;
+  },
+  watermelon() { // TODO: スイカ
+    const s = mesh(new THREE.SphereGeometry(.5, 24, 16), mat(0x2f8f3a));
+    s.scale.set(1.25, 1, 1);
+    return group(s);
+  },
+  plant() { // TODO: 植木鉢
+    return group(
+      mesh(new THREE.CylinderGeometry(.32, .24, .42, 16), mat(0xc0643a)),
+      mesh(new THREE.SphereGeometry(.36, 16, 12), mat(0x3fae4f), 0, .42, 0),
+    );
+  },
+  // ---- 叩いて！ ----
+  mole() { // TODO: モグラ
+    const eye = mat(0x111111);
+    return group(
+      mesh(new THREE.SphereGeometry(.42, 20, 14), mat(0x7a4a2a)),
+      mesh(new THREE.SphereGeometry(.1, 10, 8), mat(0xff9fb0), 0, .02, .4),
+      mesh(new THREE.SphereGeometry(.05, 8, 6), eye, -.14, .16, .35),
+      mesh(new THREE.SphereGeometry(.05, 8, 6), eye, .14, .16, .35),
+    );
+  },
+  chick() { // TODO: ダミー（ひよこ）
+    const beak = mesh(new THREE.ConeGeometry(.09, .2, 8), mat(0xff8a2a), 0, .02, .42);
+    beak.rotation.x = Math.PI / 2;
+    const eye = mat(0x111111);
+    return group(
+      mesh(new THREE.SphereGeometry(.4, 20, 14), mat(0xffe14d)), beak,
+      mesh(new THREE.SphereGeometry(.05, 8, 6), eye, -.14, .14, .34),
+      mesh(new THREE.SphereGeometry(.05, 8, 6), eye, .14, .14, .34),
+    );
+  },
+  bomb() { // TODO: ダミー（ばくだん）
+    return group(
+      mesh(new THREE.SphereGeometry(.4, 20, 14), mat(0x262633, { roughness: .3 })),
+      mesh(new THREE.CylinderGeometry(.04, .04, .25, 6), mat(0xc8b48a), 0, .48, 0),
+      mesh(new THREE.SphereGeometry(.08, 8, 6), mat(0xffa030, { emissive: 0xff6a00, emissiveIntensity: .8 }), 0, .62, 0),
+    );
+  },
+  // ---- 完成させて！（お皿・器） ----
+  parfaitGlass() { // TODO: パフェグラス
+    const glass = mesh(new THREE.CylinderGeometry(.95, .55, 2.2, 28, 1, true),
+      mat(0xbfe6ff, { transparent: true, opacity: .32, side: THREE.DoubleSide, roughness: .1 }), 0, .1, 0);
+    return group(
+      mesh(new THREE.CylinderGeometry(.6, .55, .5, 24), mat(0xd9a85b), 0, -.75, 0),   // コーンフレーク
+      mesh(new THREE.CylinderGeometry(.78, .6, .7, 24), mat(0xfff3dc), 0, -.15, 0),   // バニラ
+      mesh(new THREE.CylinderGeometry(.9, .78, .55, 24), mat(0xf27aa0), 0, .45, 0),   // ベリー
+      glass,
+      mesh(new THREE.CylinderGeometry(.08, .08, .5, 10), mat(0xbfe6ff, { transparent: true, opacity: .6 }), 0, -1.25, 0),
+      mesh(new THREE.CylinderGeometry(.6, .6, .08, 24), mat(0xbfe6ff, { transparent: true, opacity: .6 }), 0, -1.5, 0),
+    );
+  },
+  puddingPlate() { // TODO: プリンのお皿
+    return group(
+      mesh(new THREE.CylinderGeometry(1.7, 1.5, .1, 32), mat(0xffffff), 0, -.65, 0),
+      mesh(new THREE.CylinderGeometry(.55, .72, .75, 28), mat(0xf6d36b), 0, -.22, 0),
+      mesh(new THREE.CylinderGeometry(.56, .56, .08, 28), mat(0x7a3d12), 0, .19, 0),
+    );
+  },
+  // ---- 完成させて！（盛り付けパーツ。原点＝底） ----
+  softCream() { // TODO: ソフトクリーム
+    const m = mat(0xfffaf0);
+    return group(
+      mesh(new THREE.ConeGeometry(.5, .45, 24), m, 0, .22, 0),
+      mesh(new THREE.ConeGeometry(.36, .42, 24), m, 0, .5, 0),
+      mesh(new THREE.ConeGeometry(.2, .4, 24), m, 0, .76, 0),
+    );
+  },
+  strawberry() { // TODO: いちご
+    const body = mesh(new THREE.ConeGeometry(.24, .44, 16), mat(0xe8203a), 0, .22, 0);
+    body.rotation.x = Math.PI;
+    return group(body, mesh(new THREE.ConeGeometry(.2, .1, 8), mat(0x3fae4f), 0, .46, 0));
+  },
+  wafer() { // TODO: ウエハース
+    const w = mesh(new THREE.BoxGeometry(.2, .85, .32), mat(0xd9a85b), 0, .42, 0);
+    return group(w);
+  },
+  cherry() { // TODO: さくらんぼ
+    const stem = mesh(new THREE.CylinderGeometry(.02, .02, .35, 6), mat(0x4a7a2a), .06, .45, 0);
+    stem.rotation.z = -.35;
+    return group(mesh(new THREE.SphereGeometry(.18, 16, 12), mat(0xd8143a, { roughness: .25 }), 0, .18, 0), stem);
+  },
+  whip() { // TODO: ホイップクリーム
+    const m = mat(0xffffff);
+    return group(mesh(new THREE.ConeGeometry(.34, .3, 18), m, 0, .15, 0), mesh(new THREE.ConeGeometry(.2, .3, 18), m, 0, .38, 0));
+  },
+  mikan() { // TODO: みかん
+    const s = mesh(new THREE.CylinderGeometry(.34, .34, .14, 24, 1, false, -Math.PI / 2, Math.PI), mat(0xff9a1f), 0, 0, 0);
+    s.rotation.x = Math.PI / 2;
+    return group(s);
+  },
+};
+
+/** 文字を描ける板（タイマー表示などに使う）。TODO: 画像に差し替えるならテクスチャを読み込むだけでOK */
+function makeCanvasPanel(w, h, pxW = 256, pxH = 128) {
+  const canvas = document.createElement("canvas");
+  canvas.width = pxW; canvas.height = pxH;
+  const tex = new THREE.CanvasTexture(canvas);
+  const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex }));
+  return { canvas, ctx: canvas.getContext("2d"), tex, plane };
+}
+
+/* ---------- 4. Engine（Three.js の土台） ---------- */
+const Engine = {
+  init(container) {
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    container.appendChild(this.renderer.domElement);
+
+    this.scene = new THREE.Scene();
+    const bg = Assets.texture("background");
+    this.scene.background = bg || new THREE.Color(CONFIG.bgColor);
+
+    this.camera = new THREE.PerspectiveCamera(55, 1, 0.1, 200);
+    this.resetCamera();
+
+    this.scene.add(new THREE.HemisphereLight(0xfff4e0, 0x2a2050, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+    sun.position.set(3, 8, 6);
+    this.scene.add(sun);
+
+    this.raycaster = new THREE.Raycaster();
+    addEventListener("resize", () => this.resize());
+    this.resize();
+  },
+  /** 標準カメラ：正面から z=0 の平面を見る。2D的なゲームはこのまま使う */
+  resetCamera() {
+    this.camera.position.set(0, 0, 10);
+    this.camera.lookAt(0, 0, 0);
+  },
+  resize() {
+    const w = innerWidth, h = innerHeight;
+    this.renderer.setSize(w, h, false);
+    this.camera.aspect = w / h;
+    this.camera.updateProjectionMatrix();
+  },
+  /** 標準カメラで z の平面に見える範囲 {w, h}（縦長スマホで画面外に出ない配置に使う） */
+  viewSize(z = 0) {
+    const d = 10 - z;
+    const h = 2 * Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * d;
+    return { w: h * this.camera.aspect, h };
+  },
+  visibleWidthAt(z = 0) { return this.viewSize(z).w; },
+  render() { this.renderer.render(this.scene, this.camera); },
+};
+
+/* ---------- 5. Input ----------
+   ゲーム側に届くイベント（どれも info を受け取る）
+     onTap(info)        … 指が触れた瞬間
+     onDrag(info)       … 指を動かしている間
+     onRelease(info)    … 指を離した
+     onSwipe(dir, info) … 素早く・ある程度動かして離した  dir: left/right/up/down
+   info の中身： id（指の番号）, x, y（画面px）, ndc（Three.js用 -1〜1）,
+                startX, startY, dx, dy（触れた所からの移動量）, prevX, prevY（1つ前の位置）, elapsed（秒） */
+const Input = {
+  SWIPE_MIN: 30, // px
+  handler: null,
+  pointers: new Map(),
+  ndc(x, y) { return new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1); },
+  init(el) {
+    const info = (e, p) => ({
+      id: e.pointerId, x: e.clientX, y: e.clientY, ndc: this.ndc(e.clientX, e.clientY),
+      startX: p.x, startY: p.y, dx: e.clientX - p.x, dy: e.clientY - p.y,
+      prevX: p.lx, prevY: p.ly, elapsed: (performance.now() - p.t) / 1000,
+    });
+    el.addEventListener("pointerdown", (e) => {
+      const p = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now() };
+      this.pointers.set(e.pointerId, p);
+      try { el.setPointerCapture(e.pointerId); } catch (_) {}
+      this.handler?.tap(info(e, p));
+    });
+    el.addEventListener("pointermove", (e) => {
+      const p = this.pointers.get(e.pointerId);
+      if (!p) return;
+      const i = info(e, p);
+      p.lx = e.clientX; p.ly = e.clientY;
+      this.handler?.drag(i);
+    });
+    const end = (e, allowSwipe) => {
+      const p = this.pointers.get(e.pointerId);
+      if (!p) return;
+      this.pointers.delete(e.pointerId);
+      const i = info(e, p);
+      this.handler?.release(i);
+      if (allowSwipe && Math.hypot(i.dx, i.dy) >= this.SWIPE_MIN) {
+        const dir = Math.abs(i.dx) > Math.abs(i.dy) ? (i.dx > 0 ? "right" : "left") : (i.dy > 0 ? "down" : "up");
+        this.handler?.swipe(dir, i);
+      }
+    };
+    el.addEventListener("pointerup", (e) => end(e, true));
+    el.addEventListener("pointercancel", (e) => end(e, false));
+  },
+};
+
+/* ---------- 5b. Motion（スマホを振る・傾ける操作） ----------
+   ・enable() はボタンを押した「その瞬間」に呼ぶ必要があります（iPhoneの許可ダイアログのため）
+   ・許可をもらった後、本当にセンサーの値が届くかを1.5秒だけ確かめます
+     （パソコンや Artifacts の中では値が届かないので、自動で「使えない」になります）
+   ゲーム側に届くもの：
+     onShake(強さ)   … 一定以上の勢いで振った（連続判定は SHAKE_GAP ミリ秒あける）
+     onMotion(強さ)  … センサーの値が来るたび
+     this.tilt()     … 傾き {x, y}。x: +で右へ傾けた / y: +で上（画面の上側）へ傾けた
+                        値は「ゲームが始まった瞬間の持ち方」からのずれ（約 ±0.5 で 30°）
+   傾きの計算：deviceorientation の beta/gamma から「重力の向き」を求めています。
+   スマホを立てて持っても、寝かせて持っても、同じ式で扱えます（縦持ち前提）。 */
+const Motion = {
+  SHAKE_THRESHOLD: 13,   // TODO: 実機で調整。小さいほど軽く振っても反応する（単位 m/s²）
+  SHAKE_GAP: 150,        // ミリ秒
+  TILT_INVERT_X: false,  // TODO: 実機で左右が逆に動いたら true
+  TILT_INVERT_Y: false,  // TODO: 実機で上下が逆に動いたら true
+  supported: typeof window.DeviceMotionEvent !== "undefined",
+  enabled: false,
+  tiltOk: false,
+  handler: null,
+  _seen: false, _tiltSeen: false, _prev: null, _last: 0, _listening: false,
+  _up: null, _base: null, _orientDenied: false,
+
+  /** 結果： "ok" | "ok-notilt" | "unsupported" | "denied" | "nodata" */
+  async enable() {
+    if (!this.supported) return "unsupported";
+    // iPhone / iPad は「動きと方向」の許可が要る。Android などは関数がないのでそのまま通る
+    const ask = (Cls) => (typeof Cls !== "undefined" && typeof Cls.requestPermission === "function")
+      ? Cls.requestPermission().catch(() => "denied") : Promise.resolve("granted");
+    const [m, o] = await Promise.all([ask(window.DeviceMotionEvent), ask(window.DeviceOrientationEvent)]);
+    if (m !== "granted") return "denied";
+    this._orientDenied = o !== "granted";
+    if (!this._listening) {
+      addEventListener("devicemotion", (e) => this._onMotion(e));
+      addEventListener("deviceorientation", (e) => this._onOrient(e));
+      this._listening = true;
+    }
+    this._seen = false; this._tiltSeen = false;
+    await new Promise((res) => {
+      const t0 = performance.now();
+      const check = () => {
+        if ((this._seen && this._tiltSeen) || performance.now() - t0 > 1500) res();
+        else setTimeout(check, 100);
+      };
+      check();
+    });
+    if (!this._seen) return "nodata";
+    this.enabled = true;
+    this.tiltOk = this._tiltSeen && !this._orientDenied;
+    return this.tiltOk ? "ok" : "ok-notilt";
+  },
+  disable() { this.enabled = false; this.tiltOk = false; },
+
+  _onMotion(e) {
+    const a = e.acceleration, g = e.accelerationIncludingGravity;
+    let power = null;
+    if (a && a.x != null) power = Math.hypot(a.x, a.y, a.z);            // 重力を除いた揺れ
+    else if (g && g.x != null) {                                         // 重力込みしか取れない機種は差分で代用
+      if (this._prev) power = Math.hypot(g.x - this._prev.x, g.y - this._prev.y, g.z - this._prev.z) * 2;
+      this._prev = { x: g.x, y: g.y, z: g.z };
+    }
+    if (power == null) return;
+    this._seen = true;
+    if (!this.enabled) return;
+    this.handler?.motion(power);
+    const now = performance.now();
+    if (power > this.SHAKE_THRESHOLD && now - this._last > this.SHAKE_GAP) {
+      this._last = now;
+      this.handler?.shake(power);
+    }
+  },
+
+  /** 端末の座標で見た「上向きベクトル」を beta/gamma から作る（x:右, y:画面の上, z:画面の手前） */
+  _onOrient(e) {
+    if (e.beta == null || e.gamma == null) return;
+    this._tiltSeen = true;
+    const b = e.beta * Math.PI / 180, g = e.gamma * Math.PI / 180;
+    const u = [-Math.cos(b) * Math.sin(g), Math.sin(b), Math.cos(b) * Math.cos(g)];
+    this._up = this._up ? this._up.map((v, i) => v + (u[i] - v) * 0.5) : u;   // 少しなめらかに
+  },
+  /** 今の持ち方を「水平（傾きゼロ）」の基準にする。各ゲームの開始時に GameManager が呼ぶ */
+  calibrate() { this._base = this._up ? this._up.slice() : null; },
+  /** 基準からの傾き。重力が画面上でどちらへ引くか＝ボールが転がる向き */
+  tilt() {
+    if (!this._up) return { x: 0, y: 0 };
+    const b = this._base || this._up;
+    let x = -(this._up[0] - b[0]), y = -(this._up[1] - b[1]);
+    if (this.TILT_INVERT_X) x = -x;
+    if (this.TILT_INVERT_Y) y = -y;
+    return { x, y };
+  },
+};
+
+/** ゲームが必要とする機能の一覧。meta.requires に書いた名前が全部 true のゲームだけ抽選に入る */
+const Features = {
+  motion: () => Motion.enabled,
+  tilt:   () => Motion.enabled && Motion.tiltOk,
+};
+
+/* ---------- 6. UI ---------- */
+const UI = {
+  $: (id) => document.getElementById(id),
+  init() {
+    ["hud", "score", "count", "timebar", "hint", "bannerText",
+     "startScreen", "overScreen", "finalScore"].forEach((id) => (this[id] = this.$(id)));
+  },
+  banner(text, type = "") {
+    const el = this.$("banner");
+    this.bannerText.textContent = text;
+    el.className = type;
+    void el.offsetWidth;
+    el.classList.add("pop");
+  },
+  hideBanner() { this.bannerText.textContent = ""; this.$("banner").className = ""; },
+  setHint(text) { this.hint.textContent = text; },
+  setScore(n) { this.score.textContent = n; },
+  setTime(remain, total) {
+    this.count.textContent = Math.max(0, remain).toFixed(1);
+    this.timebar.style.transform = `scaleX(${Math.max(0, remain / total)})`;
+  },
+  show(el, on) { el.hidden = !on; },
+};
+
+/* ---------- 7. MiniGame（すべてのミニゲームの親クラス） ----------
+   子クラスで上書きする場所：
+     setup()  update(dt, t)  onTap(info)  onDrag(info)  onRelease(info)  onSwipe(dir, info)  onTimeUp()
+   結果を決める：this.win() / this.lose()
+
+   便利な道具：
+     this.add(obj)                … このゲームの物として追加（終了時に自動で片付け）
+     this.pick(info, objs)        … 指の下にある3Dオブジェクトを調べる
+     this.toWorld(info, z)        … 指の位置を3D座標に変換（z の平面上）
+     this.toScreen(vec3)          … 3D座標を画面px座標に変換
+     this.tween(obj, {pos, scale}, 秒, 終わったら)  … なめらかに移動
+     this.hint("あと3回")         … タイマー下に小さな文字を出す
+     this.difficulty / this.duration
+
+   ドラッグ＆ドロップ：setup() で this.draggables = [つかめる物...] を入れ、
+     onDrop(obj, worldPos) を書くだけ。true を返すとその場に残り、false で元の位置に戻る。
+     （この機能は onTap/onDrag/onRelease の既定動作なので、それらを上書きするゲームでは使えません） */
+class MiniGame {
+  static meta = {
+    id: "base",
+    instruction: "がんばれ！",
+    winOnTimeout: false,       // true = 時間いっぱい耐えたらクリア
+    duration: null,            // null なら CONFIG.gameTime
+    requires: [],              // 例 ["motion"]：その機能がONの時だけ抽選に入る
+  };
+  constructor(ctx) {
+    this.engine = ctx.engine;
+    this.scene = ctx.engine.scene;
+    this.camera = ctx.engine.camera;
+    this.difficulty = ctx.difficulty;
+    this.duration = ctx.duration;
+    this.root = new THREE.Group();
+    this.scene.add(this.root);
+    this.result = null;
+    this._disposables = [];
+    this._tweens = [];
+    this.draggables = [];
+    this._held = null;
+  }
+  get meta() { return this.constructor.meta; }
+
+  // --- 子クラスで上書きする場所 ---
+  setup() {}
+  update(dt, t) {}
+  onTap(info) { this._dragStart(info); }
+  onDrag(info) { this._dragMove(info); }
+  onRelease(info) { this._dragEnd(info); }
+  onSwipe(dir, info) {}
+  onDrop(obj, pos) { return false; }
+  onShake(power) {}
+  onMotion(power) {}
+  /** 傾き {x, y}（ゲーム開始時の持ち方が基準）。requires: ["tilt"] のゲームで使う */
+  tilt() { return Motion.tilt(); }
+  onTimeUp() { this.meta.winOnTimeout ? this.win() : this.lose(); }
+
+  // --- 共通の道具 ---
+  win()  { if (!this.result) this.result = "win"; }
+  lose() { if (!this.result) this.result = "lose"; }
+  add(obj) { this.root.add(obj); return obj; }
+  track(thing) { this._disposables.push(thing); return thing; }
+  hint(text) { UI.setHint(text); }
+  pick(info, objects) {
+    this.engine.raycaster.setFromCamera(info.ndc, this.camera);
+    const hits = this.engine.raycaster.intersectObjects(objects, true);
+    return hits.length ? hits[0] : null;
+  }
+  toWorld(info, z = 0) {
+    const ndc = info.ndc || Input.ndc(info.x, info.y);
+    this.engine.raycaster.setFromCamera(ndc, this.camera);
+    const out = new THREE.Vector3();
+    return this.engine.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 0, 1), -z), out) || out;
+  }
+  toScreen(v) {
+    const p = v.clone().project(this.camera);
+    return { x: (p.x + 1) / 2 * innerWidth, y: (1 - p.y) / 2 * innerHeight };
+  }
+  tween(obj, { pos, scale }, dur = .2, done) {
+    this._tweens.push({ obj, dur, t: 0, done,
+      p0: obj.position.clone(), p1: pos ? pos.clone() : obj.position.clone(),
+      s0: obj.scale.x, s1: scale ?? obj.scale.x });
+  }
+
+  // --- ドラッグ＆ドロップの中身 ---
+  _dragStart(info) {
+    if (this.result || this._held || !this.draggables.length) return;
+    const hit = this.pick(info, this.draggables);
+    if (!hit) return;
+    let o = hit.object;
+    while (o && !this.draggables.includes(o)) o = o.parent;
+    if (!o) return;
+    if (!o.userData.home) o.userData.home = { pos: o.position.clone(), scale: o.scale.x };
+    const w = this.toWorld(info, 1.2);
+    this._held = { obj: o, id: info.id, off: new THREE.Vector3(o.position.x - w.x, o.position.y - w.y + .35, 0) };
+    this._tweens = this._tweens.filter((tw) => tw.obj !== o);
+    o.scale.setScalar(o.userData.dragScale ?? o.scale.x * 1.15);
+  }
+  _dragMove(info) {
+    const h = this._held;
+    if (!h || h.id !== info.id) return;
+    const w = this.toWorld(info, 1.2);
+    h.obj.position.set(w.x + h.off.x, w.y + h.off.y, 1.2);
+  }
+  _dragEnd(info) {
+    const h = this._held;
+    if (!h || h.id !== info.id) return;
+    this._held = null;
+    const kept = !this.result && this.onDrop(h.obj, h.obj.position.clone());
+    if (!kept) { const home = h.obj.userData.home; this.tween(h.obj, { pos: home.pos, scale: home.scale }, .18); }
+  }
+
+  /** 毎フレーム GameManager から呼ばれる（tween を進めてから update を呼ぶ） */
+  _tick(dt, t) {
+    for (const tw of this._tweens) {
+      tw.t = Math.min(1, tw.t + dt / tw.dur);
+      const e = 1 - Math.pow(1 - tw.t, 3);
+      tw.obj.position.lerpVectors(tw.p0, tw.p1, e);
+      tw.obj.scale.setScalar(tw.s0 + (tw.s1 - tw.s0) * e);
+      if (tw.t >= 1 && tw.done) tw.done();
+    }
+    this._tweens = this._tweens.filter((tw) => tw.t < 1);
+    this.update(dt, t);
+  }
+  dispose() {
+    this.root.traverse((o) => {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) [].concat(o.material).forEach((m) => m.dispose());
+    });
+    this._disposables.forEach((d) => d.dispose && d.dispose());
+    this.scene.remove(this.root);
+    this.engine.resetCamera();
+  }
+}
+
+/* ---------- 8. GameRegistry（登録簿） ---------- */
+const GameRegistry = {
+  list: [],
+  register(GameClass) { this.list.push(GameClass); },
+  /** 今の設定で遊べるゲームだけ（振る操作OFFなら振るゲームは除く） */
+  available() {
+    return this.list.filter((g) => (g.meta.requires || []).every((name) => Features[name]?.()));
+  },
+  pickRandom(lastClass) {
+    let pool = this.available();
+    if (CONFIG.avoidRepeat && pool.length > 1) pool = pool.filter((g) => g !== lastClass);
+    return pool[Math.floor(Math.random() * pool.length)];
+  },
+};
+
+/* 小さな道具 */
+const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const rand = (a, b) => a + Math.random() * (b - a);
+
+/* =====================================================================
+   9. ミニゲーム本体  ― ここに増やしていく
+   ===================================================================== */
+
+/* ---- 連打：ブロックを指定回数タップして壊す（回数違いは子クラスで） ---- */
+class TapCubeGame extends MiniGame {
+  static hitsNeeded = 3;
+  static meta = { id: "tap-cube", instruction: "叩け！" };
+  setup() {
+    this.hitsNeeded = this.constructor.hitsNeeded;
+    this.hits = 0;
+    this.shake = 0;
+    this.flash = 0;
+    // TODO: ここを後で3Dモデルや画像に差し替え（ASSETS.tapCube）
+    this.cube = this.add(new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.4, 2.4), Assets.material("tapCube", 0xff9a3c)));
+    this.cube.rotation.set(0.5, 0.6, 0);
+    this.cube.material.emissive = new THREE.Color(0xffffff);
+    this.baseColor = this.cube.material.color.clone();
+    this.pieces = [];
+    this.hint(`あと ${this.hitsNeeded} 回`);
+  }
+  update(dt) {
+    if (this.cube.visible) {
+      const p = this.hits / this.hitsNeeded;
+      this.cube.rotation.y += dt * (0.8 + this.difficulty * 0.1);
+      this.shake = Math.max(0, this.shake - dt * 5);
+      this.flash = Math.max(0, this.flash - dt * 8);
+      this.cube.position.x = (Math.random() - .5) * this.shake * .4;
+      this.cube.scale.setScalar(1 - p * 0.3 + this.shake * 0.08);  // 小さくなりすぎると連打しにくいので7割まで
+      this.cube.material.color.copy(this.baseColor).lerp(new THREE.Color(0xff3030), p);
+      this.cube.material.emissiveIntensity = this.flash * .5;
+    }
+    for (const pc of this.pieces) {
+      pc.position.addScaledVector(pc.userData.v, dt);
+      pc.userData.v.y -= 12 * dt;
+      pc.rotation.x += dt * 6; pc.rotation.y += dt * 5;
+    }
+  }
+  onTap(info) {
+    if (this.result || !this.cube.visible) return;
+    if (!this.pick(info, [this.cube])) return;
+    this.hits++;
+    this.shake = 1; this.flash = 1;
+    this.hint(`あと ${this.hitsNeeded - this.hits} 回`);
+    if (this.hits >= this.hitsNeeded) { this.explode(); this.win(); }
+  }
+  explode() {
+    this.cube.visible = false;
+    const geo = new THREE.BoxGeometry(0.5, 0.5, 0.5);
+    const m = Assets.material("tapCube", 0xff5a3c);
+    for (let i = 0; i < 16; i++) {
+      const pc = this.add(new THREE.Mesh(geo, m));
+      pc.userData.v = new THREE.Vector3((Math.random() - .5) * 10, Math.random() * 8 + 2, (Math.random() - .5) * 6);
+      this.pieces.push(pc);
+    }
+  }
+}
+class TapCube20Game extends TapCubeGame {
+  static hitsNeeded = 20;
+  static meta = { id: "tap-cube-20", instruction: "20回 叩け！" };
+}
+class TapCube30Game extends TapCubeGame {
+  static hitsNeeded = 30;
+  static meta = { id: "tap-cube-30", instruction: "30回 叩け！" };
+}
+
+/* ---- よけろ！：迫る赤い球を左右スワイプで避ける ---- */
+class DodgeGame extends MiniGame {
+  static meta = { id: "dodge", instruction: "よけろ！", winOnTimeout: true };
+  setup() {
+    this.camera.position.set(0, 3.2, 8);
+    this.camera.lookAt(0, 0, -4);
+    const w = Math.min(Engine.visibleWidthAt(0) * 0.32, 2.2);
+    this.lanes = [-w, 0, w];
+    this.lane = 1;
+    // TODO: ここを後で床の画像に差し替え（ASSETS.floor）
+    const floor = this.add(new THREE.Mesh(new THREE.PlaneGeometry(w * 4, 60), Assets.material("floor", 0x2c2550)));
+    floor.rotation.x = -Math.PI / 2;
+    floor.position.set(0, -0.6, -22);
+    for (const x of [-w / 2, w / 2]) {
+      const line = this.add(new THREE.Mesh(new THREE.PlaneGeometry(0.05, 60), new THREE.MeshBasicMaterial({ color: 0x4a4080 })));
+      line.rotation.x = -Math.PI / 2;
+      line.position.set(x, -0.59, -22);
+    }
+    // TODO: ここを後で自機のモデル/画像に差し替え（ASSETS.player）
+    this.player = this.add(new THREE.Mesh(new THREE.SphereGeometry(0.55, 32, 16), Assets.material("player", 0x3fa4ff)));
+    this.player.position.set(0, 0, 3);
+    this.enemies = [];
+    this.spawnTimer = 0;
+    this.speed = 14 + this.difficulty * 1.2;
+    this.spawnEvery = Math.max(0.42, 0.8 - this.difficulty * 0.03);
+    this.enemyGeo = this.track(new THREE.SphereGeometry(0.6, 24, 12));
+    // TODO: ここを後で敵のモデル/画像に差し替え（ASSETS.enemy）
+    this.enemyMat = this.track(Assets.material("enemy", 0xff3b4e));
+    this.spawn(this.lane);
+  }
+  spawn(laneIndex) {
+    const e = new THREE.Mesh(this.enemyGeo, this.enemyMat);
+    e.position.set(this.lanes[laneIndex], 0, -40);
+    this.root.add(e);
+    this.enemies.push(e);
+  }
+  update(dt, t) {
+    this.player.position.x += (this.lanes[this.lane] - this.player.position.x) * Math.min(1, dt * 16);
+    this.spawnTimer += dt;
+    if (this.spawnTimer > this.spawnEvery && t < 4.2) {
+      this.spawnTimer = 0;
+      const lanes = shuffle([0, 1, 2]);   // 1レーンは必ず空ける
+      this.spawn(lanes[0]);
+      if (this.difficulty >= 3 && Math.random() < .4) this.spawn(lanes[1]);
+    }
+    for (const e of this.enemies) {
+      e.position.z += this.speed * dt;
+      e.rotation.x -= dt * 6;
+      if (!this.result && e.position.distanceTo(this.player.position) < 1.05) {
+        this.player.material.color.set(0x888888);
+        this.lose();
+      }
+    }
+  }
+  onSwipe(dir) {
+    if (this.result) return;
+    if (dir === "left")  this.lane = Math.max(0, this.lane - 1);
+    if (dir === "right") this.lane = Math.min(2, this.lane + 1);
+  }
+}
+
+/* ---- ここで押せ！：往復するバーが緑のエリアに重なった瞬間にタップ ---- */
+class TimingGame extends MiniGame {
+  static meta = { id: "timing", instruction: "ここで押せ！" };
+  setup() {
+    this.range = Math.min(Engine.visibleWidthAt(0) * 0.42, 4);
+    this.zoneHalf = Math.max(0.35, 0.6 - this.difficulty * 0.03);
+    this.add(new THREE.Mesh(new THREE.BoxGeometry(this.range * 2 + 1, 0.3, 0.3), mat(0x3a3266)));
+    this.zone = this.add(new THREE.Mesh(new THREE.BoxGeometry(this.zoneHalf * 2, 1.6, 0.4),
+      new THREE.MeshStandardMaterial({ color: 0x3ddc84, transparent: true, opacity: .75 })));
+    // TODO: ここを後でバーのモデル/画像に差し替え（ASSETS.timingBar）
+    this.bar = this.add(new THREE.Mesh(new THREE.BoxGeometry(0.28, 2.4, 0.6), Assets.material("timingBar", 0xfff3d6)));
+    this.bar.position.z = 0.2;
+    this.speed = 2.2 + this.difficulty * 0.18;
+    this.phase = Math.random() * Math.PI * 2;
+    this.stopped = false;
+  }
+  update(dt, t) {
+    if (this.stopped) return;
+    this.bar.position.x = Math.sin(t * this.speed + this.phase) * this.range;
+  }
+  onTap() {
+    if (this.result) return;
+    this.stopped = true;
+    if (Math.abs(this.bar.position.x) <= this.zoneHalf) { this.zone.material.color.set(0xffffff); this.win(); }
+    else { this.bar.material.color.set(0xff3b4e); this.lose(); }
+  }
+}
+
+/* ---- ① 切って！：タイマーにつながる本物の1本だけをスワイプで切る ----
+   5本の線がタイマーから手元の装置まで伸びる。4本は途中で途切れているダミー。
+   ※ダミーを切ったら失敗にしています（全部まとめて横に払うだけで勝てないように） */
+class CutWireGame extends MiniGame {
+  static meta = { id: "cut-wire", instruction: "切って！" };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    const W = Math.min(w * 0.38, 2.0);
+    const topY = h / 2 - 2.3, botY = -h / 2 + 1.4;
+    const slot = (i) => -W + (2 * W) * i / 4;
+
+    // タイマー本体  TODO: 時限装置の画像/モデルに差し替え
+    this.add(mesh(new THREE.BoxGeometry(2.8, 1.3, .5), mat(0x2b2b33), 0, topY, -.3));
+    this.panel = makeCanvasPanel(2.4, 1.0);
+    this.panel.plane.position.set(0, topY, 0);
+    this.add(this.panel.plane); this.track(this.panel.tex);
+    // 手元の装置  TODO: 画像/モデルに差し替え
+    this.add(mesh(new THREE.BoxGeometry(2 * W + .8, .6, .5), mat(0x55506e), 0, botY - .2, -.3));
+
+    // 線の道すじ：段ごとに並び順をシャッフルして、線どうしを交差させる
+    const levels = 5;
+    const order = [shuffle([0, 1, 2, 3, 4])];          // 上端（タイマー側）
+    for (let k = 1; k < levels; k++) order.push(shuffle([0, 1, 2, 3, 4]));
+    const ys = Array.from({ length: levels }, (_, k) => (topY - .65) + ((botY + .15) - (topY - .65)) * k / (levels - 1));
+
+    // TODO: 線の色を変えるならここ（すべて違う色）
+    const colors = shuffle([0xff4d4d, 0x3f8cff, 0xffd23f, 0x46d37a, 0xd77bff]);
+    this.real = Math.floor(Math.random() * 5);
+    this.pieces = [];   // {wire, pts:[Vector3...], mesh}
+    for (let i = 0; i < 5; i++) {
+      const z = i * .03;
+      const pts = ys.map((y, k) => new THREE.Vector3(slot(order[k][i]), y, z));
+      const curve = new THREE.CatmullRomCurve3(pts);
+      const samples = curve.getSpacedPoints(90);
+      let ranges = [[0, 90]];
+      if (i !== this.real) {   // ダミーは途中で途切れさせる
+        const cut = Math.floor(rand(.3, .8) * 90), gap = 5;
+        ranges = [[0, cut], [cut + gap, 90]];
+      }
+      const m = mat(colors[i], { roughness: .4 });
+      for (const [a, b] of ranges) {
+        const seg = samples.slice(a, b + 1);
+        const tube = this.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(seg), seg.length, .075, 8), m));
+        this.pieces.push({ wire: i, pts: seg, mesh: tube });
+        // 途切れた端に小さな玉をつけて「切れている」ことを見えやすく
+        if (ranges.length > 1) {
+          const endP = a === 0 ? seg[seg.length - 1] : seg[0];
+          this.add(mesh(new THREE.SphereGeometry(.1, 8, 6), m, endP.x, endP.y, endP.z));
+        }
+      }
+    }
+    this.display = null; // null = 残り時間を表示
+    this.drawTimer(this.duration);
+  }
+  drawTimer(remain) {
+    const { ctx, canvas, tex } = this.panel;
+    ctx.fillStyle = "#0b0b10"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.font = "bold 84px monospace";
+    if (this.display === "stop") { ctx.fillStyle = "#5be3a1"; ctx.fillText("STOP", 128, 66); }
+    else if (this.display === "boom") { ctx.fillStyle = "#ff5a6e"; ctx.fillText("BOOM", 128, 66); }
+    else { ctx.fillStyle = "#ff4040"; ctx.fillText(Math.max(0, remain).toFixed(2).padStart(5, "0"), 128, 66); }
+    tex.needsUpdate = true;
+  }
+  update(dt, t) {
+    if (!this.result) this.drawTimer(this.duration - t);
+  }
+  onDrag(info) {
+    if (this.result) return;
+    const a = this.toWorld({ x: info.prevX, y: info.prevY }), b = this.toWorld(info);
+    if (a.distanceTo(b) < 1e-4) return;
+    // この指の動き（a→b）が最初に横切った線を探す
+    let best = null;
+    for (const pc of this.pieces) {
+      for (let k = 0; k < pc.pts.length - 1; k++) {
+        const s = segmentHit(a, b, pc.pts[k], pc.pts[k + 1]);
+        if (s !== null && (!best || s < best.s)) best = { s, pc };
+      }
+    }
+    if (!best) return;
+    if (best.pc.wire === this.real) {
+      this.pieces.filter((p) => p.wire === this.real).forEach((p) => p.mesh.material.color.offsetHSL(0, -.6, -.25));
+      this.display = "stop"; this.win();
+    } else {
+      best.pc.mesh.material.emissive = new THREE.Color(0xffffff); best.pc.mesh.material.emissiveIntensity = .6;
+      this.display = "boom"; this.lose();
+    }
+    this.drawTimer(0);
+  }
+  onTimeUp() { this.display = "boom"; this.drawTimer(0); this.lose(); }
+}
+/** 線分 ab と cd が交われば ab 上の位置(0〜1)を、交わらなければ null を返す */
+function segmentHit(a, b, c, d) {
+  const cr = (o, p, q) => (p.x - o.x) * (q.y - o.y) - (p.y - o.y) * (q.x - o.x);
+  const d1 = cr(c, d, a), d2 = cr(c, d, b), d3 = cr(a, b, c), d4 = cr(a, b, d);
+  if (d1 * d2 > 0 || d3 * d4 > 0 || d1 === d2) return null;
+  return d1 / (d1 - d2);
+}
+
+/* ---- ② 完成させて！：パーツをドラッグ＆ドロップで盛り付ける ----
+   メニューは DESSERTS に追加するだけで増やせます */
+const DESSERTS = [
+  { name: "パフェ", base: "parfaitGlass",
+    parts: [ // target＝器の中での置き場所（器の原点からの位置）
+      { model: "softCream",  target: [0, 1.05, 0] },
+      { model: "strawberry", target: [-.6, 1.05, .25] },
+      { model: "wafer",      target: [.6, 1.05, 0] },
+    ] },
+  { name: "プリンアラモード", base: "puddingPlate",
+    parts: [
+      { model: "cherry", target: [0, .23, 0] },
+      { model: "whip",   target: [-1.05, -.6, .25] },
+      { model: "mikan",  target: [1.05, -.42, .25] },
+    ] },
+];
+class DessertGame extends MiniGame {
+  static meta = { id: "dessert", instruction: "完成させて！" };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    const recipe = DESSERTS[Math.floor(Math.random() * DESSERTS.length)];
+    this.dish = this.add(Models[recipe.base]());
+    this.dish.position.set(0, -1.6, 0);
+    this.dish.rotation.x = .28;   // 少し上から見下ろす角度
+    // トレイ（上段）  TODO: トレイ画像に差し替え可
+    const trayY = h / 2 - 2.4;
+    this.add(mesh(new THREE.BoxGeometry(Math.min(w - .4, 4.2), .12, 1.2), mat(0x3a3266), 0, trayY - .2, -.4));
+    const xs = [-1.3, 0, 1.3].map((x) => x * Math.min(1, (w - .6) / 3.8));
+    this.remaining = recipe.parts.length;
+    shuffle(recipe.parts).forEach((part, i) => {
+      const obj = this.add(Models[part.model]());
+      obj.position.set(xs[i], trayY - .1, 0);
+      obj.rotation.x = .28;
+      obj.scale.setScalar(.85);
+      obj.userData.dragScale = 1.05;
+      obj.userData.target = new THREE.Vector3(...part.target);
+      this.draggables.push(obj);
+    });
+    this.hint(recipe.name);
+  }
+  onDrop(obj, pos) {
+    const center = this.dish.localToWorld(new THREE.Vector3(0, 0, 0));
+    if (Math.hypot(pos.x - center.x, pos.y - center.y) > 2.0) return false;   // 器から遠い
+    const goal = this.dish.localToWorld(obj.userData.target.clone());
+    this.draggables = this.draggables.filter((o) => o !== obj);
+    this.tween(obj, { pos: goal, scale: 1 }, .15, () => this.dish.attach(obj));
+    if (--this.remaining === 0) this.win();
+    return true;
+  }
+}
+
+/* ---- ③ はめて！：ラストピースを5つの候補から選んでドラッグ ----
+   ピースの形は上下左右の「出っ張り(+1)/へこみ(-1)/平ら(0)」で決まります */
+function jigsawShape(s, edges) { // edges = [上, 右, 下, 左]
+  const h = s / 2, shape = new THREE.Shape();
+  const corners = [[-h, h], [h, h], [h, -h], [-h, -h]];
+  const normals = [[0, 1], [1, 0], [0, -1], [-1, 0]];
+  shape.moveTo(-h, h);
+  for (let i = 0; i < 4; i++) {
+    const [ax, ay] = corners[i], [bx, by] = corners[(i + 1) % 4], [nx, ny] = normals[i], t = edges[i];
+    const P = (f, o = 0) => [ax + (bx - ax) * f + nx * o * s, ay + (by - ay) * f + ny * o * s];
+    if (t !== 0) {
+      const k = 0.3 * t;
+      shape.lineTo(...P(.37));
+      shape.bezierCurveTo(...P(.2, k), ...P(.8, k), ...P(.63));
+    }
+    shape.lineTo(bx, by);
+  }
+  return shape;
+}
+class PuzzleGame extends MiniGame {
+  static meta = { id: "puzzle", instruction: "はめて！" };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    const s = Math.min(1.1, (w - .8) / 3.3);
+    const N = 3, R = 1, C = 1;  // 3×3、真ん中が空き
+    // 内側の辺の凹凸をランダムに決める
+    const H = Array.from({ length: N - 1 }, () => Array.from({ length: N }, () => (Math.random() < .5 ? 1 : -1)));
+    const V = Array.from({ length: N }, () => Array.from({ length: N - 1 }, () => (Math.random() < .5 ? 1 : -1)));
+    const edgesOf = (r, c) => [
+      r === 0 ? 0 : -H[r - 1][c], c === N - 1 ? 0 : V[r][c],
+      r === N - 1 ? 0 : H[r][c],  c === 0 ? 0 : -V[r][c - 1],
+    ];
+    const extrude = (edges) => {
+      const g = new THREE.ExtrudeGeometry(jigsawShape(s, edges), { depth: .16, bevelEnabled: true, bevelThickness: .03, bevelSize: .025, bevelSegments: 2, curveSegments: 10 });
+      g.translate(0, 0, -.08);
+      return g;
+    };
+    const boardY = -1.2;
+    // 台紙  TODO: 完成絵の画像に差し替え（ASSETS.puzzle）
+    this.add(mesh(new THREE.BoxGeometry(s * 3 + .5, s * 3 + .5, .1), mat(0x15122a), 0, boardY, -.25));
+    const pieceColor = 0x7fc8f8;
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      if (r === R && c === C) continue;
+      const m = Assets.material("puzzle", new THREE.Color(pieceColor).offsetHSL(0, 0, rand(-.06, .06)));
+      this.add(mesh(extrude(edgesOf(r, c)), m, (c - 1) * s, boardY - (r - 1) * s, 0));
+    }
+    // 空き穴の輪郭
+    const correct = edgesOf(R, C);
+    const outline = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints(jigsawShape(s, correct).getPoints(12)),
+      new THREE.LineBasicMaterial({ color: 0xffcf3f }));
+    outline.position.set(0, boardY, .1);
+    this.add(outline);
+    this.holePos = new THREE.Vector3(0, boardY, 0);
+
+    // 候補5つ：正解1つ＋凹凸の組み合わせが違うダミー4つ
+    const key = (e) => e.join(",");
+    const all = [];
+    for (let i = 0; i < 16; i++) all.push([0, 1, 2, 3].map((b) => ((i >> b) & 1 ? 1 : -1)));
+    const dummies = shuffle(all.filter((e) => key(e) !== key(correct))).slice(0, 4);
+    const options = shuffle([correct, ...dummies]);
+    const trayY = h / 2 - 2.3, span = Math.min(w - 1.0, 4.2);
+    const small = Math.min(.62, (span / 5) / (s * 1.4));
+    options.forEach((edges, i) => {
+      const p = mesh(extrude(edges), mat(pieceColor), -span / 2 + span * (i + .5) / 5, trayY, 0);
+      p.scale.setScalar(small);
+      p.userData.dragScale = 1;
+      p.userData.correct = key(edges) === key(correct);
+      this.draggables.push(this.add(p));
+    });
+  }
+  onDrop(obj, pos) {
+    if (Math.hypot(pos.x - this.holePos.x, pos.y - this.holePos.y) > .8) return false;
+    if (!obj.userData.correct) {   // 違うピースは元に戻る（失敗にはしない）
+      obj.material.color.set(0xff6a7a);
+      setTimeout(() => obj.material && obj.material.color.set(0x7fc8f8), 300);
+      return false;
+    }
+    this.draggables = [];
+    this.tween(obj, { pos: this.holePos, scale: 1 }, .12);
+    this.win();
+    return true;
+  }
+}
+
+/* ---- ④ 打ち返して！：飛んでくる物の中から野球ボールだけをフリックで打ち返す ----
+   ボール3個を全部打ち返したらクリア。ダミーを打つ・ボールを見逃すと失敗
+   判定：物が手前の「ヒットゾーン」にいる間に、画面のどこかをフリックすれば当たる。
+         ゾーンに何もない時のフリックは空振り（失敗にはならない） */
+class BatGame extends MiniGame {
+  static meta = { id: "bat", instruction: "打ち返して！" };
+  setup() {
+    this.camera.position.set(0, 1.4, 9);
+    this.camera.lookAt(0, .5, 0);
+    // TODO: 床・背景を画像に差し替え可
+    const floor = this.add(new THREE.Mesh(new THREE.PlaneGeometry(14, 50), mat(0x2c4a3a)));
+    floor.rotation.x = -Math.PI / 2; floor.position.set(0, -1, -15);
+    const dummyKinds = ["kettle", "watermelon", "plant"];   // TODO: ダミーを増やすならここ
+    const kinds = shuffle(["ball", "ball", "ball", ...shuffle(dummyKinds)]);
+    if (kinds[0] !== "ball") { const bi = kinds.indexOf("ball"); [kinds[0], kinds[bi]] = [kinds[bi], kinds[0]]; } // 最初は必ずボール
+    this.travel = Math.max(1.05, 1.45 - this.difficulty * .03);   // 届くまでの秒数
+    const gap = (5 - .4 - this.travel) / (kinds.length - 1);
+    this.items = kinds.map((kind, i) => {
+      const obj = this.add(Models[kind]());
+      obj.visible = false;
+      return { obj, isBall: kind === "ball", spawn: .15 + i * gap, state: "wait", p: 0,
+               x0: rand(-.4, .4), x1: rand(-1.0, 1.0), v: new THREE.Vector3() };
+    });
+    this.need = 3; this.returned = 0;
+    this.zoneFrom = .6;           // TODO: ヒットゾーンの始まり（0〜1。小さいほど早くから打てる＝やさしい）
+    this.swung = new Set();       // 1回のフリックで振るのは1回だけ
+    // ゾーンに入った物を囲む印  TODO: 画像に差し替え可
+    this.marker = this.add(new THREE.Mesh(new THREE.RingGeometry(.62, .72, 32),
+      new THREE.MeshBasicMaterial({ color: 0xffcf3f, transparent: true, opacity: .9, side: THREE.DoubleSide })));
+    this.marker.visible = false;
+    this.hint(`ボール あと ${this.need}`);
+  }
+  update(dt, t) {
+    for (const it of this.items) {
+      const o = it.obj;
+      if (it.state === "wait" && t >= it.spawn && !this.result) { it.state = "fly"; o.visible = true; }
+      if (it.state === "fly") {
+        it.p += dt / this.travel;
+        o.position.set(it.x0 + (it.x1 - it.x0) * it.p, .2 + Math.sin(Math.PI * it.p) * 1.4, -28 + 33 * it.p);
+        o.rotation.x += dt * 4; o.rotation.y += dt * 3;
+        if (it.p >= 1) {
+          it.state = "gone"; o.visible = false;
+          if (it.isBall) this.lose();   // 見逃し
+        }
+      }
+      if (it.state === "hit") {
+        o.position.addScaledVector(it.v, dt); it.v.y -= 9 * dt;
+        o.rotation.x -= dt * 12;
+      }
+    }
+    const target = this.inZone();
+    this.marker.visible = !!target && !this.result;
+    if (target) this.marker.position.copy(target.obj.position).add(new THREE.Vector3(0, 0, .5));
+  }
+  /** ヒットゾーンにいる物のうち、いちばん手前のもの */
+  inZone() {
+    let best = null;
+    for (const it of this.items) if (it.state === "fly" && it.p >= this.zoneFrom && (!best || it.p > best.p)) best = it;
+    return best;
+  }
+  onDrag(info) {
+    if (this.result || this.swung.has(info.id)) return;
+    if (Math.hypot(info.dx, info.dy) < 25) return;   // ちょっと動かしただけでは振らない
+    this.swung.add(info.id);                          // 指を離すまでもう振らない
+    const it = this.inZone();
+    if (!it) return;                                  // 空振り
+    it.state = "hit";
+    it.v.set(info.dx * .02, 7, -30);
+    if (!it.isBall) { this.lose(); return; }
+    this.returned++;
+    this.hint(`ボール あと ${this.need - this.returned}`);
+    if (this.returned >= this.need) this.win();
+  }
+  onRelease(info) { this.swung.delete(info.id); }
+}
+
+/* ---- ⑤ 叩いて！：モグラ叩き（ダミーを叩くと失敗） ---- */
+class WhackGame extends MiniGame {
+  static meta = { id: "whack", instruction: "叩いて！" };
+  setup() {
+    this.camera.position.set(0, 7, 6);
+    this.camera.lookAt(0, 0, .4);
+    // TODO: 地面を画像に差し替え（ASSETS.ground）
+    const ground = this.add(new THREE.Mesh(new THREE.PlaneGeometry(10, 10), Assets.material("ground", 0x4c8a3c)));
+    ground.rotation.x = -Math.PI / 2;
+    const gap = Math.min(1.45, (Engine.viewSize(0).w * 1.3) / 3.6);
+    this.holes = [];
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+      const x = (c - 1) * gap, z = (r - 1) * gap;
+      const hole = this.add(new THREE.Mesh(new THREE.CircleGeometry(.5, 24), mat(0x1d140c)));
+      hole.rotation.x = -Math.PI / 2; hole.position.set(x, .01, z);
+      this.holes.push({ x, z, who: null });
+    }
+    // 出てくる順番：モグラ7・ダミー4（最初はモグラ）
+    const dummyKinds = ["chick", "bomb"];   // TODO: ダミーを増やすならここ
+    const seq = shuffle([...Array(6).fill("mole"), ...Array(4).fill(0).map(() => dummyKinds[Math.floor(Math.random() * dummyKinds.length)])]);
+    this.seq = ["mole", ...seq];
+    this.every = Math.max(.32, .42 - this.difficulty * .01);
+    this.stay = Math.max(.7, .95 - this.difficulty * .02);
+    this.next = .05;
+    this.need = 4; this.hits = 0;
+    this.chars = [];
+    this.hint(`モグラ あと ${this.need}`);
+  }
+  update(dt, t) {
+    if (t >= this.next && this.seq.length && !this.result) {
+      this.next += this.every;
+      const free = this.holes.filter((h) => !h.who);
+      if (free.length) {
+        const hole = free[Math.floor(Math.random() * free.length)];
+        const kind = this.seq.shift();
+        const obj = this.add(Models[kind]());
+        obj.position.set(hole.x, -.6, hole.z);
+        hole.who = { obj, isMole: kind === "mole", age: 0, hit: false, hole };
+        this.chars.push(hole.who);
+      }
+    }
+    for (const ch of this.chars) {
+      ch.age += dt;
+      const up = .12, life = ch.hit ? ch.hitAt + .1 + up : this.stay;   // 叩かれたらすぐ引っ込む
+      let y;
+      if (ch.age < up) y = ch.age / up;
+      else if (ch.age < life - up) y = 1;
+      else y = Math.max(0, (life - ch.age) / up);
+      ch.obj.position.y = -.6 + y * .95;
+      if (ch.age >= life && ch.hole.who === ch) ch.hole.who = null;
+    }
+  }
+  onTap(info) {
+    if (this.result) return;
+    const live = this.chars.filter((c) => c.hole.who === c && !c.hit && c.obj.position.y > -.3);
+    const hit = this.pick(info, live.map((c) => c.obj));
+    if (!hit) return;
+    const ch = live.find((c) => { let o = hit.object; while (o) { if (o === c.obj) return true; o = o.parent; } return false; });
+    ch.hit = true; ch.hitAt = ch.age;
+    ch.obj.scale.set(1.2, .5, 1.2);
+    if (!ch.isMole) { this.lose(); return; }
+    this.hits++;
+    this.hint(`モグラ あと ${this.need - this.hits}`);
+    if (this.hits >= this.need) this.win();
+  }
+}
+
+/* ---- ⑥ ひとふで！：図形をなぞる（指を離すとやり直し） ----
+   図形は STROKE_SHAPES に追加するだけで増やせます。
+   points：頂点の座標（だいたい -1.8〜1.8 の範囲）、edges：つなぐ頂点の番号の組 */
+const STROKE_SHAPES = [
+  { name: "星", points: [0, 1, 2, 3, 4].map((i) => [Math.sin(i * 2 * Math.PI / 5) * 1.8, Math.cos(i * 2 * Math.PI / 5) * 1.8]),
+    edges: [[0, 2], [2, 4], [4, 1], [1, 3], [3, 0]] },
+  { name: "おうち", points: [[-1.3, -1.4], [1.3, -1.4], [1.3, .5], [-1.3, .5], [0, 1.9]],
+    edges: [[0, 1], [1, 2], [2, 3], [3, 0], [3, 4], [4, 2]] },
+  { name: "リボン", points: [[-1.6, 1.4], [1.6, 1.4], [-1.6, -1.4], [1.6, -1.4]],
+    edges: [[0, 1], [1, 2], [2, 3], [3, 0]] },
+  { name: "さかな", points: [[1.7, 0], [.3, 1.1], [-.8, 0], [.3, -1.1], [-1.8, 1], [-1.8, -1]],
+    edges: [[0, 1], [1, 2], [2, 3], [3, 0], [2, 4], [4, 5], [5, 2]] },
+];
+class OneStrokeGame extends MiniGame {
+  static meta = { id: "one-stroke", instruction: "ひとふで！" };
+  setup() {
+    const { w } = Engine.viewSize(0);
+    const shape = STROKE_SHAPES[Math.floor(Math.random() * STROKE_SHAPES.length)];
+    const sc = Math.min(1, (w * .45) / 1.8);
+    const cy = -.5;
+    this.pts = shape.points.map(([x, y]) => new THREE.Vector3(x * sc, y * sc + cy, 0));
+    this.edges = shape.edges;
+    this.radius = .42;   // 頂点に「届いた」とみなす距離
+    // TODO: 線や点の見た目はここで差し替え
+    this.edgeMat = (on) => mat(on ? 0xffcf3f : 0x5c5680, on ? { emissive: 0xffaa00, emissiveIntensity: .4 } : {});
+    this.edgeMeshes = this.edges.map(([a, b]) => this.add(this.segment(this.pts[a], this.pts[b], .14, this.edgeMat(false))));
+    this.dots = this.pts.map((p) => this.add(mesh(new THREE.CircleGeometry(.17, 20), mat(0xffffff), p.x, p.y, .05)));
+    this.trail = this.add(this.segment(new THREE.Vector3(), new THREE.Vector3(1, 0, 0), .1, mat(0xffcf3f)));
+    this.trail.visible = false;
+    this.reset();
+    this.hint(shape.name);
+  }
+  segment(a, b, width, m) {
+    const s = new THREE.Mesh(new THREE.BoxGeometry(1, width, .04), m);
+    this.place(s, a, b);
+    return s;
+  }
+  place(s, a, b) {
+    s.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, .02);
+    s.scale.x = Math.max(.001, a.distanceTo(b));
+    s.rotation.z = Math.atan2(b.y - a.y, b.x - a.x);
+  }
+  reset() {
+    this.cur = -1; this.pointerId = null; this.used = new Set();
+    this.edgeMeshes.forEach((m) => { m.material.color.set(0x5c5680); m.material.emissiveIntensity = 0; });
+    this.dots.forEach((d) => d.material.color.set(0xffffff));
+    this.trail.visible = false;
+  }
+  nearest(p) {
+    let best = -1, bd = this.radius;
+    this.pts.forEach((q, i) => { const d = Math.hypot(p.x - q.x, p.y - q.y); if (d < bd) { bd = d; best = i; } });
+    return best;
+  }
+  onTap(info) {
+    if (this.result || this.pointerId !== null) return;
+    const v = this.nearest(this.toWorld(info));
+    if (v < 0) return;
+    this.pointerId = info.id; this.cur = v;
+    this.dots[v].material.color.set(0xffcf3f);
+  }
+  onDrag(info) {
+    if (this.result || info.id !== this.pointerId) return;
+    const p = this.toWorld(info);
+    this.trail.visible = true;
+    this.place(this.trail, this.pts[this.cur], p);
+    const v = this.nearest(p);
+    if (v < 0 || v === this.cur) return;
+    const ei = this.edges.findIndex(([a, b]) => (a === this.cur && b === v) || (b === this.cur && a === v));
+    if (ei < 0 || this.used.has(ei)) return;   // 線がない所・なぞり済みの線は無視
+    this.used.add(ei);
+    this.edgeMeshes[ei].material.color.set(0xffcf3f);
+    this.edgeMeshes[ei].material.emissive = new THREE.Color(0xffaa00);
+    this.edgeMeshes[ei].material.emissiveIntensity = .4;
+    this.cur = v;
+    this.dots[v].material.color.set(0xffcf3f);
+    if (this.used.size === this.edges.length) { this.trail.visible = false; this.win(); }
+  }
+  onRelease(info) {
+    if (info.id !== this.pointerId) return;
+    if (!this.result) this.reset();   // 指を離したら最初から
+    else this.pointerId = null;
+  }
+}
+
+/* ---- 振って！：スマホを振って炭酸のキャップを飛ばす（振る操作ONの時だけ出る） ---- */
+Models.sodaBottle = function () {   // TODO: ペットボトルのモデル/画像に差し替え
+  const glass = mat(0xbff5d6, { transparent: true, opacity: .35, roughness: .1 });
+  const g = group(
+    mesh(new THREE.CylinderGeometry(.7, .7, 2.4, 28), glass, 0, -.2, 0),
+    mesh(new THREE.CylinderGeometry(.3, .7, .6, 28), glass, 0, 1.3, 0),
+    mesh(new THREE.CylinderGeometry(.62, .62, 1.4, 28), mat(0x8fd3ff, { transparent: true, opacity: .8 }), 0, -.7, 0),
+  );
+  const foam = mesh(new THREE.CylinderGeometry(.62, .62, 1, 28), mat(0xffffff), 0, 0, 0);
+  const cap = mesh(new THREE.CylinderGeometry(.34, .34, .3, 20), mat(0xe8203a), 0, 1.75, 0);
+  g.add(foam, cap);
+  g.userData = { foam, cap };
+  return g;
+};
+class ShakeGame extends MiniGame {
+  static meta = { id: "shake-bottle", instruction: "振って！", requires: ["motion"] };
+  setup() {
+    this.need = Math.min(16, 10 + Math.floor(this.difficulty / 3));
+    this.count = 0;
+    this.wobble = 0;
+    this.bottle = this.add(Models.sodaBottle());
+    this.bottle.position.y = -.6;
+    this.setFoam(0);
+    this.hint(`あと ${this.need} 回`);
+  }
+  setFoam(p) {
+    const { foam } = this.bottle.userData;
+    const hgt = Math.max(.01, p * 1.3);
+    foam.scale.y = hgt;
+    foam.position.y = 0 + hgt / 2;
+  }
+  update(dt, t) {
+    this.wobble = Math.max(0, this.wobble - dt * 4);
+    this.bottle.rotation.z = Math.sin(t * 40) * this.wobble * .25;
+    const cap = this.bottle.userData.cap;
+    if (cap.userData.v) {
+      cap.position.addScaledVector(cap.userData.v, dt);
+      cap.userData.v.y -= 15 * dt;
+      cap.rotation.x += dt * 15;
+    }
+  }
+  onShake() {
+    if (this.result) return;
+    this.count++;
+    this.wobble = 1;
+    this.setFoam(this.count / this.need);
+    this.hint(`あと ${this.need - this.count} 回`);
+    if (this.count >= this.need) {
+      this.bottle.userData.cap.userData.v = new THREE.Vector3(rand(-1, 1), 12, 2);
+      this.win();
+    }
+  }
+}
+
+const TAU = Math.PI * 2;
+const angleDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+
+/* ---- スイカ割り！：目隠しで回る人をタップで止め、竹刀がスイカを向いていれば成功 ----
+   上から見た図。竹刀の向き（人の向き）とスイカの方向の差が tolerance 以内なら割れる */
+Models.suika = function () {   // TODO: スイカの画像/モデルに差し替え
+  const g = group(mesh(new THREE.SphereGeometry(.7, 28, 18), mat(0x2f8f3a)));
+  for (let i = 0; i < 5; i++) {
+    const s = mesh(new THREE.TorusGeometry(.705, .03, 6, 48), mat(0x174d1d));
+    s.rotation.y = i * Math.PI / 5; g.add(s);
+  }
+  g.scale.set(1.15, 1, 1);
+  return g;
+};
+Models.suikaHalf = function (side) {   // side: 1=右半分, -1=左半分
+  const shell = mesh(new THREE.SphereGeometry(.7, 24, 16, side > 0 ? Math.PI / 2 : Math.PI * 1.5, Math.PI), mat(0x2f8f3a, { side: THREE.DoubleSide }));
+  const flesh = mesh(new THREE.CircleGeometry(.68, 32), mat(0xff4560));
+  flesh.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+  const g = group(shell, flesh);
+  g.scale.set(1.15, 1, 1);
+  return g;
+};
+Models.blindfoldPerson = function () {   // TODO: 目隠しした人（上から見た図）の画像/モデルに差し替え
+  const g = group();
+  const body = mesh(new THREE.SphereGeometry(.5, 20, 12), mat(0x3f8cff)); body.scale.set(1.4, .75, .5); g.add(body);
+  g.add(mesh(new THREE.SphereGeometry(.34, 20, 14), mat(0x2b1a10), 0, .05, .25));   // 頭（髪）
+  const band = mesh(new THREE.TorusGeometry(.33, .06, 8, 24), mat(0xf2f2f2), 0, .05, .3); g.add(band);   // 目隠し
+  const arms = mat(0xffd2b0);
+  for (const s of [-1, 1]) { const a = mesh(new THREE.BoxGeometry(.13, .55, .13), arms, s * .25, .45, .3); a.rotation.z = -s * .45; g.add(a); }
+  const sword = new THREE.Group();   // 竹刀：+Y の向きが「前」
+  sword.add(mesh(new THREE.BoxGeometry(.09, .32, .09), mat(0x6b3b1d), 0, .82, .35));
+  sword.add(mesh(new THREE.BoxGeometry(.07, 1.35, .07), mat(0xe9d39a), 0, 1.65, .35));
+  g.add(sword);
+  g.userData.sword = sword;
+  return g;
+};
+class SuikaGame extends MiniGame {
+  static meta = { id: "suika", instruction: "スイカ割り！" };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    // TODO: 砂浜の画像に差し替え可
+    this.add(mesh(new THREE.PlaneGeometry(w + 2, h + 2), mat(0xe8cf98), 0, 0, -1));
+    this.melonPos = new THREE.Vector3(rand(-.25, .25) * w, h / 2 - 2.8, 0);
+    this.melon = this.add(Models.suika());
+    this.melon.position.copy(this.melonPos);
+    this.person = this.add(Models.blindfoldPerson());
+    this.person.position.set(0, -h / 2 + 2.6, 0);
+    const d = this.melonPos.clone().sub(this.person.position);
+    this.targetAngle = Math.atan2(-d.x, d.y);   // 竹刀(+Y)がスイカを向く回転角
+    this.reach = d.length();
+    this.speed = 3.2 + this.difficulty * .15;                      // 回る速さ
+    this.tolerance = Math.max(.18, .32 - this.difficulty * .01);   // 許される角度のずれ
+    this.person.rotation.z = this.targetAngle + Math.PI + rand(-1, 1);
+    this.spinning = true;
+    this.swingT = -1;
+    this.hint("タップで止めて振り下ろせ");
+  }
+  update(dt) {
+    if (this.spinning) this.person.rotation.z += this.speed * dt;
+    if (this.swingT >= 0) {   // 振り下ろしの演出
+      this.swingT += dt;
+      const sword = this.person.userData.sword;
+      const k = Math.min(1, this.swingT / .15);
+      const len = this.hit ? (this.reach - .3) / 2.3 : 1.25;
+      sword.scale.y = 1 + (len - 1) * k;
+      if (this.hit && k >= 1 && !this.split) this.splitMelon();
+    }
+    if (this.halves) for (const hf of this.halves) {
+      hf.obj.position.x += hf.vx * dt; hf.vx *= .92;
+      hf.obj.rotation.y += (hf.ry - hf.obj.rotation.y) * Math.min(1, dt * 10);
+    }
+  }
+  splitMelon() {
+    this.split = true;
+    this.melon.visible = false;
+    this.halves = [1, -1].map((s) => {
+      const obj = this.add(Models.suikaHalf(s));
+      obj.position.copy(this.melonPos);
+      return { obj, vx: s * 6, ry: s * .9 };
+    });
+    this.win();
+  }
+  onTap() {
+    if (this.result || !this.spinning) return;
+    this.spinning = false;
+    this.hit = Math.abs(angleDiff(this.person.rotation.z, this.targetAngle)) <= this.tolerance;
+    this.swingT = 0;
+    if (!this.hit) setTimeout(() => this.lose(), 250);   // 空振りを少し見せてから失敗
+  }
+}
+
+/* ---- とめて！：回るルーレットを、上のお題のところで止める（チャンス3回） ---- */
+const ROULETTE = [   // TODO: 絵柄・色を変えるならここ（数を増やすと難しくなる）
+  { label: "7", color: "#ff4d5e" }, { label: "★", color: "#ffcf3f" }, { label: "♥", color: "#ff8fb8" },
+  { label: "◆", color: "#46c3ff" }, { label: "●", color: "#5be3a1" }, { label: "▲", color: "#ff9a3c" },
+  { label: "♣", color: "#b38bff" }, { label: "BAR", color: "#f2f2f2" },
+];
+class RouletteGame extends MiniGame {
+  static meta = { id: "roulette", instruction: "とめて！" };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    const n = ROULETTE.length, step = TAU / n;
+    this.step = step;
+    this.R = Math.min(1.9, (w - .6) / 2);
+    const wheelY = -1.1;
+    // ルーレット盤  TODO: 盤面の画像に差し替え可（ROULETTE の並び順と合わせる）
+    const p = makeCanvasPanel(this.R * 2, this.R * 2, 512, 512);
+    const c = p.ctx, cx = 256, r = 250;
+    c.clearRect(0, 0, 512, 512);
+    ROULETTE.forEach((s, i) => {
+      c.beginPath(); c.moveTo(cx, cx); c.arc(cx, cx, r, -(i + 1) * step, -i * step); c.closePath();
+      c.fillStyle = s.color; c.fill();
+      c.strokeStyle = "#1b1730"; c.lineWidth = 6; c.stroke();
+      const m = (i + .5) * step;
+      c.fillStyle = "#1b1730"; c.font = "bold 64px sans-serif"; c.textAlign = "center"; c.textBaseline = "middle";
+      c.fillText(s.label, cx + Math.cos(m) * r * .66, cx - Math.sin(m) * r * .66);
+    });
+    p.tex.needsUpdate = true;
+    p.plane.material.transparent = true;
+    this.wheel = this.add(p.plane); this.track(p.tex);
+    this.wheel.position.y = wheelY;
+    this.add(mesh(new THREE.TorusGeometry(this.R, .08, 8, 64), mat(0x55506e), 0, wheelY, 0));
+    const pin = this.add(mesh(new THREE.ConeGeometry(.25, .5, 3), mat(0xffffff), 0, wheelY + this.R + .15, .1));
+    pin.rotation.z = Math.PI;   // 下向きの矢印
+    // お題
+    this.target = Math.floor(Math.random() * n);
+    const t = makeCanvasPanel(2.6, 1.3, 512, 256);
+    t.ctx.fillStyle = "#2b2550"; t.ctx.fillRect(0, 0, 512, 256);
+    t.ctx.fillStyle = "#fff8ec"; t.ctx.font = "bold 44px sans-serif"; t.ctx.textAlign = "center"; t.ctx.textBaseline = "middle";
+    t.ctx.fillText("お題", 256, 52);
+    t.ctx.beginPath(); t.ctx.arc(256, 160, 72, 0, TAU); t.ctx.fillStyle = ROULETTE[this.target].color; t.ctx.fill();
+    t.ctx.fillStyle = "#1b1730"; t.ctx.font = "bold 72px sans-serif"; t.ctx.fillText(ROULETTE[this.target].label, 256, 162);
+    t.tex.needsUpdate = true;
+    t.plane.position.y = h / 2 - 2.5;
+    this.add(t.plane); this.track(t.tex);
+
+    this.speed = TAU * (.7 + this.difficulty * .04);   // 1秒あたりの回転
+    this.wheel.rotation.z = Math.random() * TAU;
+    this.spinning = true;
+    this.chances = 3;
+    this.resume = 0;
+    this.hint(`のこり ${this.chances} 回`);
+  }
+  sectorAtPin() {
+    const local = (((Math.PI / 2 - this.wheel.rotation.z) % TAU) + TAU) % TAU;
+    return Math.floor(local / this.step) % ROULETTE.length;
+  }
+  update(dt) {
+    if (this.spinning) this.wheel.rotation.z -= this.speed * dt;
+    else if (this.resume > 0 && !this.result) {
+      this.resume -= dt;
+      if (this.resume <= 0) this.spinning = true;
+    }
+  }
+  onTap() {
+    if (this.result || !this.spinning) return;
+    this.spinning = false;
+    if (this.sectorAtPin() === this.target) { this.win(); return; }
+    this.chances--;
+    this.hint(this.chances > 0 ? `のこり ${this.chances} 回` : "");
+    if (this.chances <= 0) this.lose();
+    else this.resume = .45;   // 少し止まってから再開
+  }
+}
+
+/* ---- あけて！：ダイヤルを上下にドラッグして、上の4桁に合わせる ---- */
+class DialLockGame extends MiniGame {
+  static meta = { id: "dial-lock", instruction: "あけて！" };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    this.STEP_PX = 42;   // TODO: 1目盛り分のドラッグ量(px)。小さいほど速く回る
+    this.code = Array.from({ length: 4 }, () => Math.floor(Math.random() * 10));
+    const reelW = Math.min(.95, (w - 1.0) / 4.4), gap = reelW * 1.12;
+    this.lockY = -1.4;
+    // 南京錠  TODO: 画像/モデルに差し替え
+    this.add(mesh(new THREE.BoxGeometry(gap * 4 + .6, 2.6, .6), mat(0xd9a640, { metalness: .5, roughness: .35 }), 0, this.lockY, 0));
+    this.shackle = this.add(mesh(new THREE.TorusGeometry(gap * 1.4, .2, 12, 32, Math.PI), mat(0xc8ccd4, { metalness: .7, roughness: .25 }), 0, this.lockY + 1.1, -.1));
+    this.reels = this.code.map((digit, i) => {
+      const p = makeCanvasPanel(reelW, reelW * 2, 128, 256);
+      p.plane.position.set((i - 1.5) * gap, this.lockY - .1, .32);
+      this.add(p.plane); this.track(p.tex);
+      let v = Math.floor(Math.random() * 10);
+      if (v === digit) v = (v + 5) % 10;   // 最初から合っていないように
+      return { panel: p, v, snap: v, x: p.plane.position.x, half: gap / 2, dragging: false };
+    });
+    // 暗証番号の表示
+    const t = makeCanvasPanel(3.4, 1.2, 512, 180);
+    t.ctx.fillStyle = "#2b2550"; t.ctx.fillRect(0, 0, 512, 180);
+    t.ctx.fillStyle = "#fff8ec"; t.ctx.textAlign = "center"; t.ctx.textBaseline = "middle";
+    t.ctx.font = "bold 34px sans-serif"; t.ctx.fillText("暗証番号", 256, 38);
+    t.ctx.font = "bold 92px monospace"; t.ctx.fillStyle = "#ffcf3f"; t.ctx.fillText(this.code.join(" "), 256, 118);
+    t.tex.needsUpdate = true;
+    t.plane.position.y = h / 2 - 2.4;
+    this.add(t.plane); this.track(t.tex);
+    this.drags = new Map();
+    this.hint("ダイヤルを上下にドラッグ");
+  }
+  digitOf(v) { return ((Math.round(v) % 10) + 10) % 10; }
+  drawReel(i) {
+    const r = this.reels[i], { ctx, tex } = r.panel;
+    const g = ctx.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0, "#222"); g.addColorStop(.5, "#f5f0e4"); g.addColorStop(1, "#222");
+    ctx.fillStyle = g; ctx.fillRect(0, 0, 128, 256);
+    const base = Math.floor(r.v), f = r.v - base, sp = 92;
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.font = "bold 80px monospace";
+    const ok = this.digitOf(r.v) === this.code[i] && !r.dragging;
+    for (let k = -2; k <= 2; k++) {
+      const d = (((base + k) % 10) + 10) % 10;
+      const y = 128 + (k - f) * sp;
+      ctx.fillStyle = Math.abs(k - f) < .5 && ok ? "#1f9e5f" : "#1b1730";
+      ctx.fillText(String(d), 64, y);
+    }
+    tex.needsUpdate = true;
+  }
+  reelAt(info) {
+    const p = this.toWorld(info, .32);
+    if (Math.abs(p.y - this.lockY) > 1.4) return -1;
+    return this.reels.findIndex((r) => Math.abs(p.x - r.x) <= r.half);
+  }
+  onTap(info) {
+    if (this.result) return;
+    const i = this.reelAt(info);
+    if (i < 0) return;
+    const r = this.reels[i];
+    r.dragging = true;
+    this.drags.set(info.id, { i, v0: r.v, y0: info.y });
+  }
+  onDrag(info) {
+    const d = this.drags.get(info.id);
+    if (!d || this.result) return;
+    this.reels[d.i].v = d.v0 - (info.y - d.y0) / this.STEP_PX;   // 上にドラッグで数字が増える
+  }
+  onRelease(info) {
+    const d = this.drags.get(info.id);
+    if (!d) return;
+    this.drags.delete(info.id);
+    const r = this.reels[d.i];
+    r.dragging = false;
+    r.snap = Math.round(r.v);
+    if (!this.result && this.reels.every((rr, k) => this.digitOf(rr.dragging ? rr.v : rr.snap) === this.code[k] && !rr.dragging)) {
+      this.opened = 0;
+      this.win();
+    }
+  }
+  update(dt) {
+    this.reels.forEach((r, i) => {
+      if (!r.dragging) r.v += (r.snap - r.v) * Math.min(1, dt * 18);
+      this.drawReel(i);
+    });
+    if (this.opened !== undefined) {   // 開いた！
+      this.opened = Math.min(1, this.opened + dt * 5);
+      this.shackle.position.y = this.lockY + 1.1 + this.opened * .6;
+    }
+  }
+}
+
+/* ---- かたぬき！：お菓子の輪郭をなぞって一周つなげる ----
+   点線の点を全部なぞれば成功。指を離しても、なぞった所はそのまま残ります */
+const KATANUKI_SHAPES = [   // f(t) は t=0〜2π で一周する輪郭（だいたい -1〜1 の大きさ）
+  { name: "ハート", f: (t) => [16 * Math.sin(t) ** 3 / 17, (13 * Math.cos(t) - 5 * Math.cos(2 * t) - 2 * Math.cos(3 * t) - Math.cos(4 * t)) / 17 + .15] },
+  { name: "ほし",   f: (t) => { const r = .5 + .5 * Math.abs(Math.cos(2.5 * t)) ** 2.2; return [r * Math.sin(t), r * Math.cos(t)]; } },
+  { name: "おはな", f: (t) => { const r = .78 + .22 * Math.cos(6 * t); return [r * Math.sin(t), r * Math.cos(t)]; } },
+];
+class KatanukiGame extends MiniGame {
+  static meta = { id: "katanuki", instruction: "かたぬき！" };
+  setup() {
+    const { w } = Engine.viewSize(0);
+    const shape = KATANUKI_SHAPES[Math.floor(Math.random() * KATANUKI_SHAPES.length)];
+    const S = Math.min(1.7, (w - 1.0) / 2);
+    const cy = -.6;
+    // 輪郭を細かく取り、同じ間隔の点に並べ直す
+    const fine = Array.from({ length: 400 }, (_, i) => { const [x, y] = shape.f(i / 400 * TAU); return new THREE.Vector3(x * S, y * S + cy, 0); });
+    const N = 48, curve = new THREE.CatmullRomCurve3(fine, true);
+    this.points = curve.getSpacedPoints(N).slice(0, N);
+    // お菓子の板  TODO: 型抜き菓子の画像に差し替え
+    this.add(mesh(new THREE.BoxGeometry(S * 2.5, S * 2.5, .15), mat(0xf3d9a4), 0, cy, -.1));
+    this.dotMat = mat(0x8a5a2b);
+    this.doneMat = mat(0xffcf3f, { emissive: 0xffaa00, emissiveIntensity: .4 });
+    const dotGeo = this.track(new THREE.CircleGeometry(.07, 12));
+    this.dots = this.points.map((p) => this.add(mesh(dotGeo, this.dotMat, p.x, p.y, .02)));
+    this.done = new Set();
+    this.radius = .33;   // TODO: なぞり判定の広さ。大きいほどやさしい
+    this.outline = this.points;
+    this.hint(`${shape.name}　0%`);
+    this.shapeName = shape.name;
+  }
+  mark(p) {
+    this.points.forEach((q, i) => {
+      if (!this.done.has(i) && Math.hypot(p.x - q.x, p.y - q.y) < this.radius) {
+        this.done.add(i);
+        this.dots[i].material = this.doneMat;
+        this.dots[i].scale.setScalar(1.6);
+      }
+    });
+  }
+  onDrag(info) {
+    if (this.result) return;
+    const a = this.toWorld({ x: info.prevX, y: info.prevY }), b = this.toWorld(info);
+    const steps = Math.max(1, Math.ceil(a.distanceTo(b) / .1));   // 速くなぞっても飛ばさないよう間を埋める
+    for (let s = 0; s <= steps; s++) this.mark(a.clone().lerp(b, s / steps));
+    this.hint(`${this.shapeName}　${Math.floor(this.done.size / this.points.length * 100)}%`);
+    if (this.done.size === this.points.length) this.complete();
+  }
+  onTap(info) { if (!this.result) this.mark(this.toWorld(info)); }
+  onRelease() {}
+  complete() {
+    // 抜けた形を浮かせる
+    const s = new THREE.Shape(this.points.map((p) => new THREE.Vector2(p.x, p.y)));
+    const piece = this.add(new THREE.Mesh(new THREE.ExtrudeGeometry(s, { depth: .2, bevelEnabled: false }), mat(0xe8c27c)));
+    piece.position.z = .1;
+    this.tween(piece, { pos: new THREE.Vector3(0, .3, 1.2) }, .35);
+    this.win();
+  }
+}
+
+/* ---- いれて！：振って空気を入れ、風船を枠より大きくする（振る操作ONの時だけ） ---- */
+class PumpGame extends MiniGame {
+  static meta = { id: "pump-balloon", instruction: "いれて！", requires: ["motion"] };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    this.cy = .8;
+    this.goal = Math.min(1.5, (w - 1.0) / 2);   // 目安の枠の半径
+    this.r = .45;
+    this.perShake = Math.max(.07, .1 - this.difficulty * .002);   // 1回振るごとに膨らむ量
+    this.leak = .05;                                               // 空気が抜ける速さ（毎秒）
+    // 目安の枠（点線）  TODO: 画像に差し替え可
+    for (let i = 0; i < 36; i++) {
+      const a = i / 36 * TAU;
+      // 風船と同じ奥行きに置き、常に手前に見えるよう depthTest を切る（大きさの比較がずれないように）
+      const d = this.add(mesh(new THREE.BoxGeometry(.18, .05, .02), mat(0xffcf3f, { depthTest: false, transparent: true }), Math.cos(a) * this.goal, this.cy + Math.sin(a) * this.goal * 1.12, 0));
+      d.rotation.z = a + Math.PI / 2;
+      d.renderOrder = 10;
+    }
+    // 風船  TODO: 画像/モデルに差し替え
+    this.balloon = this.add(mesh(new THREE.SphereGeometry(1, 32, 20), mat(0xff6fa0, { roughness: .25 })));
+    this.knot = this.add(mesh(new THREE.ConeGeometry(.1, .18, 10), mat(0xff6fa0)));
+    // 空気入れ  TODO: 画像/モデルに差し替え
+    this.pumpY = -h / 2 + 1.9;
+    this.add(mesh(new THREE.CylinderGeometry(.28, .28, 1.4, 16), mat(0x3f8cff), 0, this.pumpY, 0));
+    this.handle = this.add(group(
+      mesh(new THREE.CylinderGeometry(.05, .05, .9, 8), mat(0xc8ccd4), 0, .45, 0),
+      mesh(new THREE.BoxGeometry(1.0, .14, .14), mat(0x262633), 0, .9, 0),
+    ));
+    this.handleY = this.pumpY + .45;
+    this.handle.position.y = this.handleY;
+    this.hose = this.add(mesh(new THREE.BoxGeometry(.04, 1, .04), mat(0xeeeeee)));
+    this.push = 0;
+    this.hint("振って空気を入れろ");
+  }
+  update(dt) {
+    if (!this.result) this.r = Math.max(.45, this.r - this.leak * dt);
+    this.balloon.scale.set(this.r, this.r * 1.12, this.r);
+    this.balloon.position.set(0, this.cy, 0);
+    const knotY = this.cy - this.r * 1.12 - .06;
+    this.knot.position.set(0, knotY, 0);
+    const top = this.pumpY + .7, len = Math.max(.01, knotY - top);
+    this.hose.scale.y = len; this.hose.position.set(0, top + len / 2, 0);
+    this.push = Math.max(0, this.push - dt * 6);
+    this.handle.position.y = this.handleY - this.push * .4;
+  }
+  onShake() {
+    if (this.result) return;
+    this.r += this.perShake;
+    this.push = 1;
+    if (this.r >= this.goal) this.win();
+  }
+}
+
+/* ---- まぜて！：瓶を振って2色を混ぜきる（振る操作ONの時だけ） ---- */
+const MIX_RECIPES = [   // TODO: 色の組み合わせを増やすならここ
+  { name: "みどり",   a: 0x2f7dff, b: 0xffe03a, mix: 0x3fbf5a },
+  { name: "むらさき", a: 0xff3b4e, b: 0x3f6dff, mix: 0x8a4fd8 },
+  { name: "オレンジ", a: 0xff3b3b, b: 0xffe03a, mix: 0xff8a1f },
+];
+class MixGame extends MiniGame {
+  static meta = { id: "mix-color", instruction: "まぜて！", requires: ["motion"] };
+  setup() {
+    const rc = MIX_RECIPES[Math.floor(Math.random() * MIX_RECIPES.length)];
+    this.colA = new THREE.Color(rc.a); this.colB = new THREE.Color(rc.b); this.colM = new THREE.Color(rc.mix);
+    this.need = Math.min(16, 11 + Math.floor(this.difficulty / 3));
+    this.m = 0;
+    this.wobble = 0;
+    // 瓶  TODO: 画像/モデルに差し替え
+    this.jar = this.add(new THREE.Group());
+    this.jar.position.y = -.8;
+    this.jar.add(mesh(new THREE.CylinderGeometry(.95, .95, 2.6, 28), mat(0xdff3ff, { transparent: true, opacity: .3, roughness: .1 })));
+    this.jar.add(mesh(new THREE.CylinderGeometry(.75, .75, .35, 24), mat(0x55506e), 0, 1.45, 0));
+    this.top = mesh(new THREE.CylinderGeometry(.86, .86, 1.0, 28), mat(rc.a), 0, .3, 0);
+    this.bottom = mesh(new THREE.CylinderGeometry(.86, .86, 1.0, 28), mat(rc.b), 0, -.7, 0);
+    this.jar.add(this.top, this.bottom);
+    // マーブル模様のつぶ
+    this.blobs = Array.from({ length: 12 }, (_, i) => {
+      const b = mesh(new THREE.SphereGeometry(rand(.15, .28), 12, 8), mat(i % 2 ? rc.a : rc.b), 0, 0, 0);
+      b.visible = false;
+      this.jar.add(b);
+      return { obj: b, a: rand(0, TAU), y: rand(-1.0, .6), r: rand(.2, .6), sp: rand(2, 5), base: i % 2 ? this.colA : this.colB };
+    });
+    // 目標の色
+    const goal = this.add(mesh(new THREE.CircleGeometry(.35, 24), mat(rc.mix), 1.6, 2.4, 0));
+    goal.scale.setScalar(Math.min(1, Engine.viewSize(0).w / 5));
+    this.hint(`${rc.name}にしよう`);
+  }
+  update(dt, t) {
+    this.wobble = Math.max(0, this.wobble - dt * 4);
+    this.jar.rotation.z = Math.sin(t * 40) * this.wobble * .2;
+    const m = this.m;
+    this.top.material.color.copy(this.colA).lerp(this.colM, m);
+    this.bottom.material.color.copy(this.colB).lerp(this.colM, m);
+    const marble = m > 0 && m < 1;
+    for (const b of this.blobs) {
+      b.obj.visible = marble;
+      if (!marble) continue;
+      b.a += dt * b.sp;
+      b.obj.position.set(Math.cos(b.a) * b.r, b.y + Math.sin(b.a * .7) * .2, Math.sin(b.a) * b.r);
+      b.obj.material.color.copy(b.base).lerp(this.colM, m * .8);
+      b.obj.scale.setScalar(1 - m * .6);
+    }
+  }
+  onShake() {
+    if (this.result) return;
+    this.m = Math.min(1, this.m + 1 / this.need);
+    this.wobble = 1;
+    this.hint(`${Math.round(this.m * 100)}%`);
+    if (this.m >= 1) this.win();
+  }
+}
+
+/* =====================================================================
+   傾けるゲーム（requires: ["tilt"]）／ ぴったり！
+   ===================================================================== */
+
+/* ---- ころがして！：傾けてボールを緑の穴に落とす（赤い穴は落ちると失敗） ---- */
+class RollBallGame extends MiniGame {
+  static meta = { id: "roll-ball", instruction: "ころがして！", requires: ["tilt"] };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    const bw = Math.min(w * .9, 4.4), bh = Math.min(h - 3.4, 6.6);
+    const hw = bw / 2, hh = bh / 2;
+    this.rb = .24;
+    this.limX = hw - this.rb; this.limY = hh - this.rb;
+    this.board = this.add(new THREE.Group());     // 板ごと傾けて見せる
+    this.board.position.y = -.6;
+    // 板  TODO: 板の画像に差し替え
+    this.board.add(mesh(new THREE.BoxGeometry(bw, bh, .3), mat(0xc79a5b), 0, 0, -.15));
+    for (const [x, y, fw, fh] of [[0, hh, bw + .3, .15], [0, -hh, bw + .3, .15], [-hw, 0, .15, bh], [hw, 0, .15, bh]]) {
+      this.board.add(mesh(new THREE.BoxGeometry(fw, fh, .3), mat(0x7a5530), x, y, .05));
+    }
+    const hole = (x, y, r, color) => {   // TODO: 穴の見た目を差し替え
+      this.board.add(mesh(new THREE.CircleGeometry(r, 28), mat(0x120d1f), x, y, .02));
+      this.board.add(mesh(new THREE.RingGeometry(r, r + .07, 28), new THREE.MeshBasicMaterial({ color }), x, y, .03));
+      return new THREE.Vector3(x, y, 0);
+    };
+    this.goalR = .4; this.trapR = .34;
+    const goalP = new THREE.Vector3(rand(-.55, .55) * hw, rand(.35, .7) * hh, 0);
+    const start = new THREE.Vector3(rand(-.6, .6) * hw, rand(-.8, -.5) * hh, 0);
+    this.goal = hole(goalP.x, goalP.y, this.goalR, 0x5be3a1);
+    this.traps = [];
+    const nTrap = Math.min(3, Math.floor(this.difficulty / 3));   // 慣れてきたら赤い穴が出る
+    for (let i = 0, tries = 0; i < nTrap && tries < 40; tries++) {
+      const p = new THREE.Vector3(rand(-.75, .75) * hw, rand(-.25, .35) * hh, 0);
+      if (p.distanceTo(goalP) < 1.1 || p.distanceTo(start) < 1.0 || this.traps.some((q) => q.distanceTo(p) < 1.0)) continue;
+      this.traps.push(hole(p.x, p.y, this.trapR, 0xff5a6e)); i++;
+    }
+    // ボール  TODO: ボールの画像/モデルに差し替え
+    this.ball = mesh(new THREE.SphereGeometry(this.rb, 24, 16), mat(0xdfe8ff, { metalness: .5, roughness: .25 }), start.x, start.y, this.rb + .02);
+    this.board.add(this.ball);
+    this.vx = 0; this.vy = 0; this.falling = null;
+    this.hint("傾けて緑の穴へ");
+  }
+  update(dt) {
+    const t = this.tilt();
+    const k = Math.min(1, dt * 10);
+    this.board.rotation.y += (t.x * .35 - this.board.rotation.y) * k;
+    this.board.rotation.x += (-t.y * .35 - this.board.rotation.x) * k;
+    const b = this.ball;
+    if (this.falling) {   // 穴に落ちる演出
+      b.position.x += (this.falling.x - b.position.x) * Math.min(1, dt * 12);
+      b.position.y += (this.falling.y - b.position.y) * Math.min(1, dt * 12);
+      b.scale.setScalar(Math.max(.05, b.scale.x - dt * 3));
+      return;
+    }
+    const K = 24 + Math.min(this.difficulty, 15) * .5;
+    this.vx += t.x * K * dt; this.vy += t.y * K * dt;
+    const damp = Math.pow(.25, dt);
+    this.vx *= damp; this.vy *= damp;
+    const sp = Math.hypot(this.vx, this.vy);
+    if (sp > 6) { this.vx *= 6 / sp; this.vy *= 6 / sp; }
+    b.position.x += this.vx * dt; b.position.y += this.vy * dt;
+    if (b.position.x > this.limX) { b.position.x = this.limX; this.vx *= -.4; }
+    if (b.position.x < -this.limX) { b.position.x = -this.limX; this.vx *= -.4; }
+    if (b.position.y > this.limY) { b.position.y = this.limY; this.vy *= -.4; }
+    if (b.position.y < -this.limY) { b.position.y = -this.limY; this.vy *= -.4; }
+    b.rotation.x -= this.vy * dt / this.rb; b.rotation.y += this.vx * dt / this.rb;
+    if (this.result) return;
+    if (Math.hypot(b.position.x - this.goal.x, b.position.y - this.goal.y) < this.goalR * .75) {
+      this.falling = this.goal; this.win(); return;
+    }
+    for (const tp of this.traps) {
+      if (Math.hypot(b.position.x - tp.x, b.position.y - tp.y) < this.trapR * .75) { this.falling = tp; this.lose(); return; }
+    }
+  }
+}
+
+/* ---- バランス！：傾けて土台を動かし、棒の上のお皿を落とさない（5秒耐えたら成功） ----
+   棒は放っておくと倒れていく。倒れそうな側へ土台を動かして支える */
+class BalanceGame extends MiniGame {
+  static meta = { id: "balance", instruction: "バランス！", winOnTimeout: true, requires: ["tilt"] };
+  setup() {
+    const { w } = Engine.viewSize(0);
+    this.range = Math.min(w * .42, 2.1);          // 土台が動ける範囲（片側）
+    this.L = 2.7;                                  // 棒の長さ
+    this.gEff = 5 + Math.min(this.difficulty, 15) * .12;   // 倒れる速さ（大きいほど難しい）
+    this.baseY = -3.1;
+    this.x = 0; this.vx = 0;
+    this.th = (Math.random() < .5 ? -1 : 1) * rand(.06, .12);   // 棒の傾き(rad)。+ = 右へ傾く
+    this.thv = 0;
+    this.fallen = false;
+    // 土台  TODO: 手や台の画像/モデルに差し替え
+    this.cart = this.add(mesh(new THREE.BoxGeometry(1.5, .35, .6), mat(0x3f8cff), 0, this.baseY - .2, 0));
+    this.pole = this.add(new THREE.Group());
+    this.pole.position.y = this.baseY;
+    this.stick = mesh(new THREE.CylinderGeometry(.05, .05, this.L, 10), mat(0xd9a640), 0, this.L / 2, 0);
+    // お皿とプリン  TODO: 差し替え
+    this.pole.add(this.stick,
+      mesh(new THREE.CylinderGeometry(.9, .7, .12, 28), mat(0xffffff), 0, this.L + .06, 0),
+      mesh(new THREE.CylinderGeometry(.35, .45, .45, 20), mat(0xf6d36b), 0, this.L + .35, 0),
+      mesh(new THREE.SphereGeometry(.12, 12, 8), mat(0xd8143a), 0, this.L + .65, 0));
+    this.hint("傾けて支えろ");
+  }
+  update(dt) {
+    const t = this.tilt();
+    const a = this.fallen ? 0 : Math.max(-30, Math.min(30, t.x * 32));   // 土台の加速度
+    const v0 = this.vx;
+    this.vx += a * dt; this.vx *= Math.pow(.35, dt);
+    const ax = (this.vx - v0) / dt;                // 実際の土台の加速度（棒に伝わる）
+    this.x += this.vx * dt;
+    if (Math.abs(this.x) > this.range) { this.x = Math.sign(this.x) * this.range; this.vx = 0; }
+    // 倒立振り子：重力で倒れ、土台が動くと逆に振られる
+    const acc = (this.gEff / this.L) * Math.sin(this.th) - (ax / this.L) * Math.cos(this.th) - 1.0 * this.thv;
+    this.thv += acc * dt; this.th += this.thv * dt;
+    this.th = Math.max(-1.5, Math.min(1.5, this.th));
+    this.cart.position.x = this.x; this.pole.position.x = this.x;
+    this.pole.rotation.z = -this.th;
+    this.stick.material.color.setHSL(.12 - .12 * Math.min(1, Math.abs(this.th) / .9), .7, .55);
+    if (!this.fallen && Math.abs(this.th) > .9) { this.fallen = true; this.lose(); }
+  }
+}
+
+/* ---- まっすぐ！：傾けて車を左右に動かし、道から外れないように走る（5秒走れたら成功） ---- */
+class RoadGame extends MiniGame {
+  static meta = { id: "road", instruction: "まっすぐ！", winOnTimeout: true, requires: ["tilt"] };
+  setup() {
+    const { w, h } = Engine.viewSize(0);
+    this.W = w;
+    const d = Math.min(this.difficulty, 12);
+    this.half = Math.max(.9, Math.min(1.05, w * .2) - d * .01);        // 道の幅の半分
+    this.amp = Math.min(w * .25, 1.25) * (.95 + Math.min(d, 10) * .01) * (Math.random() < .5 ? -1 : 1);   // 道のくねくね（右か左へ大きく曲がる）
+    this.f1 = rand(.3, .4); this.f2 = rand(.7, .85);
+    // 5秒の間に必ず一度は大きく曲がるよう、曲がりの頂点を走る途中の位置に合わせる（動かないと道から外れる）
+    const peak = rand(7, 13);
+    this.p1 = Math.PI / 2 - peak * this.f1; this.p2 = Math.PI / 2 - peak * this.f2;
+    this.speed = 4.2 + Math.min(d, 10) * .15;
+    this.s = 0; this.carY = -3.0; this.carX = 0; this.vx = 0;
+    // 地面  TODO: 背景画像に差し替え
+    this.add(mesh(new THREE.PlaneGeometry(w + 2, h + 2), mat(0x2f6b3a), 0, 0, -.3));
+    this.edgeMats = [mat(0xff5a6e), mat(0xffffff)];
+    const asphalt = mat(0x3a3a46), n = 46, dy = (h + 1.2) / n;
+    this.rows = [];
+    for (let i = 0; i < n; i++) {
+      const y = -h / 2 - .6 + (i + .5) * dy;
+      const g = new THREE.Group();
+      const e1 = mesh(new THREE.PlaneGeometry(.16, dy * 1.15), this.edgeMats[0], -this.half, 0, .01);
+      const e2 = mesh(new THREE.PlaneGeometry(.16, dy * 1.15), this.edgeMats[0], this.half, 0, .01);
+      g.add(mesh(new THREE.PlaneGeometry(this.half * 2, dy * 1.15), asphalt, 0, 0, 0), e1, e2);
+      g.position.y = y;
+      this.add(g);
+      this.rows.push({ g, e1, e2, y });
+    }
+    // 車  TODO: 車のモデル/画像に差し替え
+    this.car = this.add(new THREE.Group());
+    this.carBody = mesh(new THREE.BoxGeometry(.42, .75, .2), mat(0xffcf3f), 0, 0, .12);
+    this.car.add(this.carBody, mesh(new THREE.BoxGeometry(.3, .32, .16), mat(0x8fd3ff), 0, .02, .27));
+    this.car.position.set(0, this.carY, .2);
+    this.hint("傾けて道からはずれるな");
+  }
+  center(S) {   // 道の中心のx。スタート地点では真ん中、そこから少しずつくねくねする
+    const env = Math.max(0, Math.min(1, S / 3));
+    return this.amp * env * env * (3 - 2 * env) * (Math.sin(S * this.f1 + this.p1) * .75 + Math.sin(S * this.f2 + this.p2) * .25);
+  }
+  update(dt) {
+    const t = this.tilt();
+    if (this.result !== "lose") this.s += this.speed * dt;
+    const target = this.result ? 0 : t.x * 11;
+    this.vx += (target - this.vx) * Math.min(1, dt * 8);
+    this.carX = Math.max(-this.W / 2 + .3, Math.min(this.W / 2 - .3, this.carX + this.vx * dt));
+    this.car.position.x = this.carX;
+    this.car.rotation.z = -this.vx * .05;
+    for (const r of this.rows) {
+      const S = this.s + (r.y - this.carY);
+      r.g.position.x = this.center(S);
+      const par = ((Math.floor(S / 1.1) % 2) + 2) % 2;   // 縁の赤白をしま模様に
+      r.e1.material = r.e2.material = this.edgeMats[par];
+    }
+    if (!this.result && Math.abs(this.carX - this.center(this.s)) > this.half * .95) {
+      this.carBody.material.color.set(0xff3b4e);
+      this.lose();
+    }
+  }
+}
+
+/* ---- ぴったり！：スマホを傾けて牛乳を注ぎ、ふちギリギリのラインで止める ----
+   傾けるほど紙パックが倒れて、たくさん出る。戻すと止まる（どちらへ傾けても注げる）。
+   黄色い線からふち（赤い線）までの間で止めれば成功。ふちを超えたらあふれて失敗。
+   止めても牛乳は少し出続けるので、その分を見越して戻すのがコツ。
+   ※傾きが使えない時（振る・傾ける操作がOFFなど）は、画面を押し続けて注ぐ方式で遊べます。
+     傾き専用にしたい場合は、meta に requires: ["tilt"] を足すだけ */
+class MilkGame extends MiniGame {
+  static meta = { id: "milk", instruction: "ぴったり！" };
+  setup() {
+    this.H = 2.3; this.baseY = -3.4;
+    const R = .95, H = this.H;
+    const d = Math.min(this.difficulty, 12);
+    this.band = Math.max(.15, .27 - d * .01);       // 成功ゾーンの高さ（小さいほど難しい）
+    this.lineLow = H - this.band;
+    this.rate = 1.1 + d * .04;                        // 注ぐ速さ
+    this.level = 0; this.flow = 0; this.pour = 0;
+    this.holding = new Set(); this.overflow = false; this.spill = 0;
+    this.mode = Features.tilt() ? "tilt" : "touch";
+    this.FULL_TILT = .5;     // TODO: この傾き（約30°）で全開。小さいほど少し傾けただけで勢いよく出る
+    const rAt = (y) => R * .86 + R * .14 * (y / H);
+    // コップ  TODO: コップのモデル/画像に差し替え
+    const glassMat = mat(0xcfeaff, { transparent: true, opacity: .28, roughness: .1, side: THREE.DoubleSide });
+    this.add(mesh(new THREE.CylinderGeometry(R, R * .86, H, 32, 1, true), glassMat, 0, this.baseY + H / 2, 0));
+    this.add(mesh(new THREE.CylinderGeometry(R * .86, R * .86, .08, 32), glassMat, 0, this.baseY + .02, 0));
+    // 牛乳  TODO: 牛乳の色/テクスチャ
+    const mg = new THREE.CylinderGeometry(R * .93, R * .84, 1, 32); mg.translate(0, .5, 0);
+    this.milk = this.add(mesh(mg, mat(0xfffdf6, { roughness: .35 }), 0, this.baseY + .05, 0));
+    this.milk.scale.y = .001;
+    const ring = (y, color) => {
+      const m = mesh(new THREE.TorusGeometry(rAt(y), .035, 8, 40), new THREE.MeshBasicMaterial({ color }), 0, this.baseY + y, 0);
+      m.rotation.x = Math.PI / 2;
+      return this.add(m);
+    };
+    ring(this.lineLow, 0xffcf3f);   // ここから成功
+    ring(H, 0xff5a6e);              // ふち（これを超えるとあふれる）
+    // 紙パック  TODO: 紙パックのモデル/画像に差し替え。原点＝注ぎ口
+    this.carton = this.add(new THREE.Group());
+    const white = mat(0xfdfdff);
+    this.carton.add(
+      mesh(new THREE.BoxGeometry(1.3, 2.0, 1.0), white, .7, -1.0, 0),
+      mesh(new THREE.BoxGeometry(1.32, .5, 1.02), mat(0x3f8cff), .7, -.7, 0),
+      mesh(new THREE.ConeGeometry(.85, .55, 4), mat(0xe8eef8), .7, .275, 0),
+      mesh(new THREE.BoxGeometry(.22, .1, .3), mat(0xe8eef8), .02, .02, 0),
+    );
+    this.carton.children[2].rotation.y = Math.PI / 4;
+    const label = makeCanvasPanel(1.0, .6, 256, 150);
+    label.ctx.fillStyle = "#ffffff"; label.ctx.fillRect(0, 0, 256, 150);
+    label.ctx.fillStyle = "#2f6fe0"; label.ctx.font = "bold 70px sans-serif"; label.ctx.textAlign = "center"; label.ctx.textBaseline = "middle";
+    label.ctx.fillText("MILK", 128, 78);
+    label.tex.needsUpdate = true;
+    label.plane.position.set(.7, -.7, .52);
+    this.carton.add(label.plane); this.track(label.tex);
+    // 牛乳の筋
+    this.stream = this.add(mesh(new THREE.CylinderGeometry(.07, .07, 1, 10), mat(0xfffdf6), 0, 0, .3));
+    this.stream.visible = false;
+    this.puddle = this.add(mesh(new THREE.CylinderGeometry(1, 1, .04, 32), mat(0xfffdf6), 0, this.baseY - .02, 0));
+    this.puddle.scale.set(.001, 1, .001);
+    this.hint(this.mode === "tilt" ? "傾けて注ぐ（戻すと止まる）" : "押し続けて注ぐ");
+  }
+  update(dt) {
+    // どれだけ注ごうとしているか（0〜1）。傾けるほど／押している間だけ大きくなる
+    let amt = 0;
+    if (!this.result) {
+      if (this.mode === "tilt") { const t = this.tilt(); amt = Math.min(1, Math.hypot(t.x, t.y) / this.FULL_TILT); }
+      else amt = this.holding.size > 0 ? 1 : 0;
+    }
+    this.pour += (amt - this.pour) * Math.min(1, dt * 9);                  // 紙パックの傾き
+    const p = this.pour;
+    this.carton.position.set(.9 - 1.0 * p, this.baseY + this.H + .7 + .45 * p, 1.2);
+    this.carton.rotation.z = p * .95;
+    const ft = Math.max(0, Math.min(1, (p - .2) / .5));                      // 少し傾けると出始め、約20°で全開（傾けるほど勢いが増す）
+    this.flow += (ft - this.flow) * Math.min(1, dt * 10);                    // 戻しても少し出続ける
+    if (!this.result && !this.overflow) this.level += this.flow * this.rate * dt;
+    if (!this.result && !this.overflow && this.level > this.H + .02) {
+      this.overflow = true; this.level = this.H + .02; this.lose();
+    }
+    if (!this.result && amt < .25 && this.flow < .03 && this.level >= this.lineLow && this.level <= this.H + .02) this.win();
+    this.milk.scale.y = Math.max(.001, Math.min(this.level, this.H + .02));
+    // 筋
+    const top = this.carton.position.y;
+    const bottom = this.overflow ? this.baseY : this.baseY + .05 + this.level;
+    const len = Math.max(.01, top - bottom);
+    this.stream.visible = this.flow > .03 || (this.overflow && this.flow > .01);
+    this.stream.position.set(this.carton.position.x - .03, (top + bottom) / 2, .3);
+    this.stream.scale.y = len;
+    if (this.overflow) {   // あふれて広がる
+      this.spill = Math.min(2.2, this.spill + dt * 2.2);
+      this.puddle.scale.set(this.spill, 1, this.spill);
+    }
+  }
+  onTap(info) { if (!this.result) this.holding.add(info.id); }
+  onRelease(info) { this.holding.delete(info.id); }
+  onTimeUp() {
+    if (this.level >= this.lineLow && this.level <= this.H + .02) this.win(); else this.lose();
+  }
+}
+
+/* ---- 新しいミニゲームのテンプレート（コピーして使う） ----
+class MyNewGame extends MiniGame {
+  static meta = { id: "my-new", instruction: "◯◯して！" };
+  setup() {
+    // TODO: ここを後で画像に差し替え
+    this.target = this.add(new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), mat(0x66ccff)));
+  }
+  update(dt, t) { }
+  onTap(info) { if (this.pick(info, [this.target])) this.win(); }
+}
+GameRegistry.register(MyNewGame);
+-------------------------------------------------------------- */
+
+// ▼ 登録（ここに1行足せばランダム抽選に加わります。外せば出なくなります）
+GameRegistry.register(TapCube20Game);
+GameRegistry.register(TapCube30Game);
+GameRegistry.register(DodgeGame);
+GameRegistry.register(TimingGame);
+GameRegistry.register(CutWireGame);
+GameRegistry.register(DessertGame);
+GameRegistry.register(PuzzleGame);
+GameRegistry.register(BatGame);
+GameRegistry.register(WhackGame);
+GameRegistry.register(OneStrokeGame);
+GameRegistry.register(SuikaGame);
+GameRegistry.register(RouletteGame);
+GameRegistry.register(DialLockGame);
+GameRegistry.register(KatanukiGame);
+GameRegistry.register(MilkGame);
+// ▼ 振るゲーム（requires: ["motion"] なので、振る操作ONの時だけ出る）
+GameRegistry.register(ShakeGame);
+GameRegistry.register(PumpGame);
+GameRegistry.register(MixGame);
+// ▼ 傾けるゲーム（requires: ["tilt"] なので、振る・傾ける操作ONで、端末が傾きに対応している時だけ出る）
+GameRegistry.register(RollBallGame);
+GameRegistry.register(BalanceGame);
+GameRegistry.register(RoadGame);
+
+/* =====================================================================
+   10. GameManager（全体の流れ）
+      title → instruction(1秒) → playing(5秒) → result(1秒) → 次のゲーム
+                                                       └→ 失敗なら gameover
+   ===================================================================== */
+const GameManager = {
+  state: "title",
+  score: 0,
+  current: null,
+  lastClass: null,
+  timer: 0,
+  playTime: 0,
+
+  init() {
+    UI.startScreen.addEventListener("pointerdown", (e) => { e.stopPropagation(); this.startRun(); });
+    UI.overScreen.addEventListener("pointerdown", (e) => {
+      e.stopPropagation();
+      if (this.timer > 0.6) this.startRun();
+    });
+    Input.handler = this;
+    Motion.handler = this;
+    this.initMotionToggle();
+    this.initTestMode();
+  },
+
+  /* ---------- テストモード ----------
+     一覧から選んだゲームだけを遊ぶ。終わったら（クリアでも失敗でも）一覧に戻る。
+     「順番に全部」は、失敗しても止まらず登録順に最後まで流す。 */
+  mode: "normal",       // "normal" | "test"
+  testQueue: [],
+  testLevel: 0,
+  REQUIRE_LABELS: {
+    motion: "振る・傾ける操作をONにすると遊べます",
+    tilt: "振る・傾ける操作をONにすると遊べます（傾き対応の端末のみ）",
+  },
+
+  initTestMode() {
+    const stop = (el) => el.addEventListener("pointerdown", (e) => e.stopPropagation());
+    const open = UI.$("testOpen");
+    stop(open);
+    open.addEventListener("click", (e) => { e.stopPropagation(); this.openTest(); });
+    UI.$("testAll").addEventListener("click", () => this.startTest(GameRegistry.available()));
+    UI.$("testBack").addEventListener("click", () => {
+      UI.show(UI.$("testScreen"), false);
+      UI.show(UI.startScreen, true);
+      this.mode = "normal";
+      this.enter("title");
+    });
+    const setLv = (d) => {
+      this.testLevel = Math.max(0, Math.min(20, this.testLevel + d));
+      UI.$("lvValue").textContent = this.testLevel;
+    };
+    UI.$("lvDown").addEventListener("click", () => setLv(-1));
+    UI.$("lvUp").addEventListener("click", () => setLv(1));
+    UI.$("testCalib").addEventListener("click", () => Motion.calibrate());
+  },
+
+  /** テスト画面の「センサー：…」表示を更新（毎フレーム呼ばれる） */
+  updateSensorInfo() {
+    const el = this._sensorEl || (this._sensorEl = UI.$("sensorInfo"));
+    let txt;
+    if (!Motion.enabled) txt = "センサー：OFF（スタート画面で「振る・傾ける操作」をON）";
+    else {
+      const t = Motion.tilt();
+      txt = `振る：○　傾き：${Motion.tiltOk ? "○" : "×"}　x ${t.x.toFixed(2)}　y ${t.y.toFixed(2)}`;
+    }
+    if (el.textContent !== txt) el.textContent = txt;
+  },
+
+  openTest() {
+    Motion.calibrate();   // 開いた時の持ち方を基準にする
+    if (this.current) { this.current.dispose(); this.current = null; }
+    UI.hideBanner();
+    UI.show(UI.hud, false);
+    UI.show(UI.startScreen, false);
+    UI.show(UI.overScreen, false);
+    // 一覧を作り直す（振る操作のON/OFFで遊べるゲームが変わるため）
+    const list = UI.$("testList");
+    list.textContent = "";
+    GameRegistry.list.forEach((G) => {
+      const missing = (G.meta.requires || []).filter((n) => !Features[n]?.());
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "game-btn";
+      btn.disabled = missing.length > 0;
+      const name = document.createElement("b");
+      name.textContent = G.meta.instruction;
+      const note = document.createElement("small");
+      note.textContent = missing.length ? missing.map((n) => this.REQUIRE_LABELS[n] || n).join(" / ") : G.meta.id;
+      btn.append(name, note);
+      btn.addEventListener("click", () => this.startTest([G]));
+      list.append(btn);
+    });
+    UI.show(UI.$("testScreen"), true);
+    this.mode = "test";
+    this.enter("test");
+  },
+
+  startTest(classes) {
+    if (!classes.length) return;
+    this.mode = "test";
+    this.testQueue = classes.slice();
+    UI.show(UI.$("testScreen"), false);
+    UI.show(UI.hud, true);
+    UI.setScore("TEST");
+    this.nextGame();
+  },
+
+  /** スタート画面の「振る操作」ボタン */
+  initMotionToggle() {
+    const btn = UI.$("motionToggle"), status = UI.$("motionStatus");
+    const render = () => {
+      btn.setAttribute("aria-pressed", String(Motion.enabled));
+      btn.textContent = `振る・傾ける操作：${Motion.enabled ? "ON" : "OFF"}`;
+    };
+    // ボタンに触れてもゲームが始まらないようにする
+    btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    // 許可ダイアログは click の中で出す必要がある（iPhone）
+    btn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (Motion.enabled) {
+        Motion.disable(); render();
+        status.textContent = "振る・傾けるゲームは出ません";
+        return;
+      }
+      btn.disabled = true;
+      status.textContent = "センサーを確認中…スマホを軽く動かしてください";
+      const r = await Motion.enable();
+      btn.disabled = false;
+      render();
+      status.textContent = {
+        ok: "ON：振る・傾けるゲームも出てきます",
+        "ok-notilt": "ON：振るゲームだけ遊べます（この端末は傾きを検出できませんでした）",
+        unsupported: "この端末・ブラウザでは使えません",
+        denied: "許可されなかったので OFF のままです",
+        nodata: "この画面では使えません。ブラウザで直接開くと使える場合があります（Androidはサイト設定の「モーションセンサー」も確認）",
+      }[r];
+    });
+  },
+
+  startRun() {
+    this.mode = "normal";
+    this.score = 0;
+    UI.setScore(0);
+    UI.show(UI.startScreen, false);
+    UI.show(UI.overScreen, false);
+    UI.show(UI.hud, true);
+    this.nextGame();
+  },
+
+  nextGame() {
+    if (this.current) this.current.dispose();
+    UI.setHint("");
+    const test = this.mode === "test";
+    const GameClass = test ? this.testQueue.shift() : GameRegistry.pickRandom(this.lastClass);
+    this.lastClass = GameClass;
+    this.duration = GameClass.meta.duration || CONFIG.gameTime;
+    this.current = new GameClass({ engine: Engine, difficulty: test ? this.testLevel : this.score, duration: this.duration });
+    this.current.setup();
+    UI.setTime(this.duration, this.duration);
+    UI.banner(GameClass.meta.instruction);
+    this.enter("instruction");
+  },
+
+  enter(state) { this.state = state; this.timer = 0; },
+
+  // --- Input からの通知（プレイ中だけゲームに渡す） ---
+  tap(info)        { if (this.state === "playing") this.current.onTap(info); },
+  drag(info)       { if (this.state === "playing") this.current.onDrag(info); },
+  release(info)    { if (this.state === "playing" || this.state === "result") this.current.onRelease(info); },
+  swipe(dir, info) { if (this.state === "playing") this.current.onSwipe(dir, info); },
+  shake(power)     { if (this.state === "playing") this.current.onShake(power); },
+  motion(power)    { if (this.state === "playing") this.current.onMotion(power); },
+
+  update(dt) {
+    this.timer += dt;
+    const g = this.current;
+    switch (this.state) {
+      case "instruction":
+        if (this.timer >= CONFIG.instructionTime) {
+          UI.hideBanner();
+          this.playTime = 0;
+          Motion.calibrate();   // この瞬間の持ち方を「水平」の基準にする
+          this.enter("playing");
+        }
+        break;
+      case "playing":
+        this.playTime += dt;
+        g._tick(dt, this.playTime);
+        UI.setTime(this.duration - this.playTime, this.duration);
+        if (!g.result && this.playTime >= this.duration) g.onTimeUp();
+        if (g.result) this.finish(g.result);
+        break;
+      case "result":
+        g._tick(dt, this.playTime += dt);   // 演出は続ける
+        if (this.timer >= CONFIG.resultTime) {
+          if (this.mode === "test") this.testQueue.length ? this.nextGame() : this.openTest();
+          else if (this.lastResult === "win") this.nextGame();
+          else this.gameOver();
+        }
+        break;
+    }
+  },
+
+  finish(result) {
+    this.lastResult = result;
+    if (result === "win") {
+      if (this.mode !== "test") { this.score++; UI.setScore(this.score); }
+      UI.banner("CLEAR!", "clear");
+    } else {
+      UI.banner("GAME OVER", "fail");
+    }
+    this.enter("result");
+  },
+
+  gameOver() {
+    UI.hideBanner();
+    UI.show(UI.hud, false);
+    UI.finalScore.textContent = this.score;
+    UI.show(UI.overScreen, true);
+    this.enter("gameover");
+  },
+};
+
+/* ---------- 起動 ---------- */
+UI.init();
+UI.$("buildInfo").textContent = `ゲーム ${GameRegistry.list.length} 種　版 ${BUILD}`;
+Engine.init(document.getElementById("stage"));
+Input.init(document.getElementById("stage"));
+GameManager.init();
+
+// タイトル画面の飾り（TODO: タイトル用モデルに差し替え可）
+const titleDeco = new THREE.Mesh(new THREE.IcosahedronGeometry(1.6, 0), new THREE.MeshStandardMaterial({ color: 0xffcf3f, flatShading: true }));
+Engine.scene.add(titleDeco);
+
+let last = performance.now();
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  titleDeco.visible = ["title", "gameover", "test"].includes(GameManager.state);
+  if (titleDeco.visible) { titleDeco.rotation.x += dt * .4; titleDeco.rotation.y += dt * .6; }
+  GameManager.update(dt);
+  if (GameManager.state === "test") GameManager.updateSensorInfo();
+  Engine.render();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+
+</body>
+</html>
